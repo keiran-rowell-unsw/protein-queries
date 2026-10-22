@@ -1,0 +1,28 @@
+# Secrets — the ResTech key lives in the environment or an untracked .env only
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# uv / Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.python-version
+*.egg-info/
+dist/
+build/
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runtime scratch
+*.log
+cache/
+.out/
