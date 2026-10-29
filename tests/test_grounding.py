@@ -131,12 +131,36 @@ def test_invented_accession_never_reaches_the_user() -> None:
         prove_answer("See P04637 and also Q12345.", evidence)
 
 
-def test_residue_claim_without_sequence_call_is_flagged() -> None:
+def test_annotated_residue_claim_without_entry_fetch_is_flagged() -> None:
+    """A position asserted as a database annotation needs an entry behind it."""
     evidence = Evidence()
     evidence.add_call("search_uniprotkb", {"query": "gene:TP53"})
     evidence.add_result(json.dumps({"results": [{"primaryAccession": "P04637"}]}))
-    problems = unsupported_claims("DNA binding at residue 120.", evidence)
-    assert any("residue-level" in p for p in problems)
+    problems = unsupported_claims(
+        "The annotated DNA binding residue 120 is phosphorylated.", evidence
+    )
+    assert any("annotated residue position" in p for p in problems)
+
+
+def test_computed_residue_position_is_not_flagged() -> None:
+    """Positions from the user's own sequence are legitimate; the old rule blocked them."""
+    evidence = Evidence()
+    evidence.add_call("compute_sequence_properties", {"sequence": "MTM" * 20})
+    evidence.add_result(
+        json.dumps(
+            {
+                "hydropathy_extremes": {
+                    "min": [14, -0.9158],
+                    "max": [66, 4.2789],
+                }
+            }
+        )
+    )
+    problems = unsupported_claims(
+        "The hydropathy profile peaks at residue 66 and is most hydrophilic at residue 14.",
+        evidence,
+    )
+    assert not any("residue" in p.lower() for p in problems), problems
 
 
 def test_empty_evidence_cannot_summarise() -> None:

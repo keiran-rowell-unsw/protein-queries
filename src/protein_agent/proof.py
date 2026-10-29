@@ -33,6 +33,13 @@ PLOT_LANGUAGE = re.compile(
     r"\b(?:x-axis|y-axis|axes)\b",
     re.IGNORECASE,
 )
+# A residue position framed as something a database recorded, rather than something we
+# calculated. Only this reading needs an entry-fetch behind it.
+ANNOTATION_CONTEXT = re.compile(
+    r"(annotated|reported|mutant|variant|phosphorylat\w*|glycosylat\w*|"
+    r"binding site|active site|catalytic|modified residue|according to)",
+    re.IGNORECASE,
+)
 RESIDUE_POS = re.compile(r"\b(?:res(?:idue)?|aa)\s*#?\s*[0-9]+", re.IGNORECASE)
 
 # Identifiers that look factual but may legitimately appear without a tool call.
@@ -154,16 +161,28 @@ def unsupported_claims(
             )
     # Sequence/residue claims need a sequence-bearing call: fetch_fasta, or an entry
     # payload carrying the sequence/length that the claim depends on.
-    if RESIDUE_POS.search(answer) and not any(
-        "sequence" in r.lower() or "fasta" in r.lower() for r in evidence.raw_results
-    ):
-        problems.append("residue-level claim with no sequence retrieval in this run")
-    if RESIDUE_POS.search(answer) and not (
-        evidence.used_tool("fetch_fasta") or evidence.used_tool("fetch_uniprot_entry")
-    ):
-        problems.append(
-            "residue-level claim without fetch_fasta or fetch_uniprot_entry in this run"
+    # Residue positions are legitimate in two situations, and the old rule rejected both:
+    # a position computed from the user's OWN pasted sequence (hydropathy extremes, a
+    # modified-residue motif offset) and a position quoted from a fetched entry. It only
+    # demanded fetch_fasta/fetch_uniprot_entry, which a pure sequence question never calls
+    # and never should. So: allow positions the local tools actually produced, and require
+    # an annotation-bearing call only for positions asserted as curated database facts.
+    if RESIDUE_POS.search(answer):
+        positions_from_tools = any(
+            marker in r
+            for r in evidence.raw_results
+            for marker in ("hydropathy", "most_hydrophobic", "most_hydrophilic", "positions")
         )
+        asserts_annotation = ANNOTATION_CONTEXT.search(answer)
+        if asserts_annotation and not (
+            evidence.used_tool("fetch_fasta")
+            or evidence.used_tool("fetch_uniprot_entry")
+            or positions_from_tools
+        ):
+            problems.append(
+                "asserts an annotated residue position without fetch_uniprot_entry or "
+                "fetch_fasta in this run"
+            )
     # A figure may only be described by the tool that drew it. Without this, a model that
     # has the underlying numbers will happily "describe" a plot it never rendered.
     if PLOT_LANGUAGE.search(answer) and not evidence.used_tool("plot_hydropathy"):

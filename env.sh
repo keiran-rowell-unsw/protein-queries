@@ -24,15 +24,19 @@ MIN_TOOL_CALLS="${PROTEIN_AGENT_MIN_CALLS:-1}"
 cd "$PROJECT_DIR"
 
 # --- environment -------------------------------------------------------------
-if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
-  echo "No virtualenv at $VENV_DIR — creating it with uv..." >&2
-  command -v uv >/dev/null 2>&1 || {
-    echo "uv not found on PATH; cannot build the environment." >&2
-    exit 1
-  }
-  uv venv "$VENV_DIR" >&2
-  uv sync --project "$PROJECT_DIR" --extra dev >&2
-fi
+command -v uv >/dev/null 2>&1 || {
+  echo "uv not found on PATH; cannot build the environment." >&2
+  exit 1
+}
+# uv sync is idempotent and the only thing that installs the project itself, so it runs
+# every time rather than only when bin/activate is missing: a venv can exist while being
+# incomplete (an interrupted torch sync) or while lagging a pyproject/uv.lock change.
+# torch is pinned to the CPU build via [tool.uv.sources] in pyproject.toml, and uv sync
+# must resolve with sources enabled. Passing --no-sources makes uv ignore that table, take
+# torch from PyPI, and install the ~4.8 GB CUDA build, which then fails to import on this
+# GPU-less node with 'libcublasLt.so.* not found'. There is deliberately no 'skip torch'
+# option: making it truly optional means changing the dependency layout, not a sync flag.
+uv sync --project "$PROJECT_DIR" --extra dev >&2
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
@@ -73,6 +77,7 @@ tool calls    : required, min $MIN_TOOL_CALLS per answer (REQUIRE_TOOL_CALLS=$RE
 api key       : $([[ -n "${RESTECH_API_KEY:-}" ]] && echo "set (not shown)" || echo MISSING)
 uniProt       : ${UNIPROT_BASE_URL:-https://rest.uniprot.org}
 pdbe MCP      : not configured on this node (structural claims stay unverified)
+optional deps : enabled (torch/metapredict; not optional, see sync block above)
 EOF
       exit 0
       ;;
