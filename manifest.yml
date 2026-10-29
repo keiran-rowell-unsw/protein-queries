@@ -1,0 +1,6 @@
+---
+name: Protein Sequence Report
+category: Interactive Apps
+subcategory: Biology
+role: passenger
+description: Submit a single protein sequence for local composition and hydropathy analysis on katana3 (no PBS job).

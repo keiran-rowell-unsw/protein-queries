@@ -33,13 +33,36 @@ For a local test only:
 .venv/bin/python -m protein_agent.report --input input.fasta --output results
 ```
 
-**Not yet an installed OpenOnDemand app.** This node has no OpenOnDemand installation;
-site administrators must supply the OOD host/location and approved authenticated proxy
-and service-management mechanism. The web server has **no built-in login** and must
-never be bound to a public interface or exposed to researchers without access control;
-on a shared node even loopback is accessible to other local users. Keep report outputs
-in a protected directory and set an appropriate retention policy before deployment.
-Do not run a permanent web server on a shared login node without site approval.
+### Open OnDemand Passenger app (no PBS queue)
+
+The repository root contains `manifest.yml` and `passenger_wsgi.py`, so it can be cloned
+as a **per-user OOD Python Passenger app**. `ood_app.py` is the dependency-free WSGI front
+end. It accepts a sequence in the user's authenticated PUN, stores it temporarily in
+`~/ondemand/data/protein-queries/reports/<random-id>/`, and invokes
+`/srv/scratch/sbf/protein_queries/.venv/bin/python -m protein_agent.report` on `katana3`
+via non-interactive per-user SSH. The temporary input is deleted; results remain in that
+private directory. There is no PBS job, persistent listener on katana3, or inference key.
+
+```bash
+cd ~/ondemand/dev
+# Only if not already cloned:
+git clone git@github.com:keiran-rowell-unsw/protein-queries.git
+# If already cloned:
+cd protein-queries && git pull
+```
+
+**Site prerequisites before launch:** the OOD host's per-user PUN must support Python
+Passenger and be able to reach `katana3` with `ssh -o BatchMode=yes -o
+StrictHostKeyChecking=yes katana3 true` as that user. The home directory must be shared
+between the OOD host and katana3, and the project `.venv` and its dependencies must be
+installed on katana3. To change the SSH hostname or project path, set
+`PROTEIN_REPORT_SSH_HOST` and/or `PROTEIN_REPORT_PROJECT` in the PUN environment (site
+administrator), not through a user form. Ask the site administrator to approve SSH from
+OOD and report execution on katana3; this is not a scheduler request. Results persist until
+manually removed, so establish a retention policy. These prerequisites have **not** been
+verified from the separate OOD host. OOD serves this app under its authenticated PUN;
+do not expose the separate `protein_agent.web` prototype to researchers, since it has no
+built-in login (even loopback on a shared node is accessible to other local users).
 
 ## Hard rule: no memory-only answers
 
