@@ -23,10 +23,15 @@ def test_report_is_complete_and_escapes_header(tmp_path):
     page = path.read_text()
     assert "<script>" not in page
     assert "&lt;script&gt;" in page
+    assert "<h2>Methods</h2>" not in page
+    assert "Charge at different pH values" in page
+    assert "Download full results (JSON)" in page
+    assert "No structure, disorder, or expression outcome was determined." in page
     assert (path.parent / "hydropathy.png").stat().st_size > 0
     data = json.loads((path.parent / "report.json").read_text())
     assert data["length_residues"] == 20
     assert "charge_vs_ph" in data
+    assert "method" in data  # provenance remains in the downloadable record
 
 
 @pytest.mark.parametrize("sequence", [">a\nACD\n>b\nEFG", "ACD-X", "ACD123", "A" * 10001])

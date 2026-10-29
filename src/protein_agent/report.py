@@ -5,7 +5,7 @@ pasted sequence. This entry point never invokes the inference gateway or require
 """
 
 # HTML template is intentionally readable rather than wrapped to Python's line limit.
-# ruff: noqa: E501, RUF001
+# ruff: noqa: E501
 from __future__ import annotations
 
 import argparse
@@ -60,18 +60,23 @@ def render_html(data: dict, *, generated_at: str) -> str:
         _row("Molecular weight", f"{data['molecular_weight_da']} Da"),
         _row("Isoelectric point (pI)", data["isoelectric_point"]),
         _row("Net charge at pH 7", data["net_charge_pH_7"]),
-        _row("GRAVY (Kyte–Doolittle)", data["gravy_kyte_doolittle"]),
-        _row("Aromaticity", data["aromaticity_iron_dos_santos"]),
-        _row("Instability index", data["instability_index_guruprasad"]),
-        _row("Extinction coefficient (reduced)", f"{ext['reduced']} M⁻¹ cm⁻¹"),
-        _row("Extinction coefficient (oxidised)", f"{ext['oxidised']} M⁻¹ cm⁻¹"),
-        _row("Average residue weight", f"{data['average_residue_weight_da']} Da"),
+        _row("Average hydropathy (GRAVY)", data["gravy_kyte_doolittle"]),
+        _row("Aromatic amino-acid fraction", f"{data['aromaticity_iron_dos_santos']:.1%}"),
+        _row("Instability index (sequence estimate)", data["instability_index_guruprasad"]),
+        _row("A280 extinction coefficient (reduced)", f"{ext['reduced']} M⁻¹ cm⁻¹"),
+        _row("A280 extinction coefficient (oxidised)", f"{ext['oxidised']} M⁻¹ cm⁻¹"),
     ]
     composition = "".join(
         _row(aa, f"{fraction:.2%}") for aa, fraction in sorted(data["amino_acid_percent"].items())
     )
-    methods = "".join(_row(key.replace("_", " "), value) for key, value in data["method"].items())
-    caveats = "".join(f"<li>{html.escape(note)}</li>" for note in data["caveats"])
+    charge = "".join(
+        _row(f"pH {ph}", value)
+        for ph, value in data["charge_vs_ph"]["ph_to_net_charge"].items()
+    )
+    classes = "".join(
+        _row(name, f"{values['mole_percent']}%")
+        for name, values in data["physico_chemical_classes"].items()
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sequence analysis report</title><style>
@@ -79,18 +84,26 @@ body{{font:1rem/1.5 system-ui,sans-serif;max-width:850px;margin:2rem auto;paddin
 h1,h2{{line-height:1.2}}table{{border-collapse:collapse;width:100%;margin-bottom:2rem}}
 th,td{{padding:.45rem;border-bottom:1px solid #ccd;text-align:left;vertical-align:top}}
 th{{width:48%}}img{{max-width:100%;height:auto}}.note{{background:#eef2f7;padding:1rem}}
+details{{margin:1rem 0;padding:.5rem;border:1px solid #ccd}}summary{{cursor:pointer;font-weight:600}}
+a{{color:#0057b8}}
 </style></head><body><h1>Sequence analysis report</h1>
-<p><strong>Input:</strong> {html.escape(data['header'])}</p>
-<p>Generated: {html.escape(generated_at)} (UTC). Input: user supplied; identity unresolved.</p>
-<h2>Computed properties</h2><table>{''.join(rows)}</table>
-<h2>Amino-acid composition</h2><table>{composition}</table>
-<h2>Hydropathy profile</h2><p>Kyte–Doolittle, 19-residue centred moving average; values are composition-derived.</p>
+<p><strong>Your sequence:</strong> {html.escape(data['header'])} · {data['length_residues']} residues</p>
+<p>Report created {html.escape(generated_at)} UTC. <a href="../../">Analyse another sequence</a></p>
+<h2>At a glance</h2><table>{''.join(rows)}</table>
+<h2>Hydropathy along the sequence</h2>
+<p>Positive values are more hydrophobic; negative values are more hydrophilic.</p>
 <img src="hydropathy.png" alt="Hydropathy profile across the submitted sequence">
-<h2>Methods</h2><table>{methods}</table>
-<h2>Limitations</h2><div class="note"><ul>{caveats}
-<li>No UniProt identity, experimental structure, disorder prediction, or expression result was obtained.</li>
-<li>Local calculations are not experimental measurements. See <a href="report.json">report.json</a> for machine-readable results, including charge versus pH and pepstats-equivalent metrics.</li>
-</ul></div></body></html>
+<p><a href="hydropathy.png" download>Download the hydropathy image</a></p>
+<details><summary>Amino-acid composition</summary><table>{composition}</table></details>
+<details><summary>Charge at different pH values</summary><table>{charge}</table></details>
+<details><summary>Residue groups</summary><table>{classes}</table>
+<p>Groups overlap, so percentages do not add to 100%.</p></details>
+<h2>Download all calculated results</h2>
+<p><a href="report.json" download>Download full results (JSON)</a> — includes additional
+composition statistics, extinction estimates, and calculation details.</p>
+<div class="note"><strong>What this report cannot tell you:</strong> These are calculations
+from your sequence, not measurements. The sequence has not been identified in a database.
+No structure, disorder, or expression outcome was determined.</div></body></html>
 """
 
 
