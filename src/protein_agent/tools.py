@@ -14,6 +14,7 @@ FETCH_ENTRY = "fetch_uniprot_entry"
 FETCH_FASTA = "fetch_fasta"
 COMPUTE_PROPERTIES = "compute_sequence_properties"
 CHROMOPHORE = "find_chromophore_candidates"
+PLOT_HYDROPATHY = "plot_hydropathy"
 PDBE_API = "pdbe_api"  # placeholder: replace with names from the connected MCP server
 PDBE_SEARCH = "run_pdbe_search_query"
 PDBE_SCHEMA = "get_pdbe_search_schema"
@@ -114,6 +115,20 @@ SEQUENCE_TOOLS: list[dict[str, Any]] = [
         {"sequence": _STRING},
         ["sequence"],
     ),
+    _fn(
+        PLOT_HYDROPATHY,
+        "Render a Kyte-Doolittle hydropathy plot for a user-supplied sequence and return "
+        "the PNG path plus the extremes it drew. REQUIRED when the user asks for a plot, "
+        "a hydropathy profile, or a transmembrane look. The plot only visualises computed "
+        "values; it is not a structure or disorder prediction.",
+        {
+            "sequence": {**_STRING, "description": "Amino-acid sequence (FASTA tolerated)"},
+            "label": {**_STRING, "description": "Optional name for the plot title"},
+            "window": {"type": "integer", "minimum": 5, "maximum": 41},
+            "out_path": {**_STRING, "description": "Optional output PNG path"},
+        },
+        ["sequence"],
+    ),
 ]
 
 # PDBe tools come from the connected MCP server's own schemas. Do not hard-code guessed
@@ -145,6 +160,7 @@ __all__ = [
     "PDBE_SCHEMA",
     "PDBE_SEARCH",
     "PDBE_TOOL_NOTE",
+    "PLOT_HYDROPATHY",
     "SEARCH_UNIPROT",
     "SEQUENCE_TOOLS",
     "UNIPROT_TOOLS",

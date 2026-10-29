@@ -18,10 +18,16 @@ from .tools import (
     FETCH_ENTRY,
     FETCH_FASTA,
     PDBE_SEARCH,
+    PLOT_HYDROPATHY,
     SEARCH_UNIPROT,
     UNIPROT_TOOLS,
 )
 
+PLOT_HINTS = re.compile(
+    r"\b(plot|graph|figure|chart|hydropathy|hydrophobicity|gravy|transmembrane|"
+    r"tm helix|topolog\w*|profile)\w*\b",
+    re.IGNORECASE,
+)
 PDB_ID_RE = re.compile(r"\b[0-9][A-Za-z0-9]{3}\b")
 ACCESSION_RE = re.compile(r"\b[A-Z0-9]{5,6}(?:-\d{1,2})?\b")
 STRUCTURE_HINTS = re.compile(
@@ -75,6 +81,12 @@ def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None)
             "sequence pasted: identity is unresolved from sequence alone, so answer only "
             "from computed properties; UniProt text search cannot match a sequence"
         )
+        if PLOT_HINTS.search(question):
+            names.add(PLOT_HYDROPATHY)
+            reasons.append(
+                "plot requested: only plot_hydropathy may describe a curve, so it is "
+                "advertised and an answer about a plot without calling it is blocked"
+            )
         return Plan(tuple(services), tuple(sorted(names)), "; ".join(reasons))
 
     names.add(FETCH_ENTRY)  # the minimum: no claim about a named protein without an entry

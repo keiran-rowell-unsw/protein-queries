@@ -146,6 +146,13 @@ class SequenceProperties:
     secondary_structure_estimate: dict[str, float]
     hydropathy_min: tuple[int, float]
     hydropathy_max: tuple[int, float]
+    average_residue_weight: float = 0.0
+    charge_vs_ph: dict[str, Any] = field(default_factory=dict)
+    dayhoff_stats: dict[str, Any] = field(default_factory=dict)
+    property_classes: dict[str, Any] = field(default_factory=dict)
+    inclusion_body: dict[str, Any] = field(default_factory=dict)
+    extinction_per_mg_ml: dict[str, float] = field(default_factory=dict)
+    solution_ionisation_method: str = ""
     warnings: list[str] = field(default_factory=list)
     method: dict[str, str] = field(default_factory=dict)
 
@@ -166,6 +173,13 @@ class SequenceProperties:
             "amino_acid_percent": self.amino_acid_percent,
             "secondary_structure_composition_estimate": self.secondary_structure_estimate,
             "hydropathy_extremes": {"min": self.hydropathy_min, "max": self.hydropathy_max},
+            "average_residue_weight_da": self.average_residue_weight,
+            "charge_vs_ph": self.charge_vs_ph,
+            "amino_acid_dayhoff_stats": self.dayhoff_stats,
+            "physico_chemical_classes": self.property_classes,
+            "inclusion_body_propensity": self.inclusion_body,
+            "a280_extinction_per_mg_ml_M-1cm-1": self.extinction_per_mg_ml,
+            "solution_ionisation_method": self.solution_ionisation_method,
             "warnings": self.warnings,
             "method": self.method,
             "caveats": [
@@ -179,6 +193,14 @@ class SequenceProperties:
 
 
 def compute_properties(sequence: str, header: str = "(unnamed)") -> SequenceProperties:
+    """All composition-derived statistics for one sequence.
+
+    Includes the pepstats-equivalent set (average residue weight, charge vs pH, per-AA
+    counts/mole%/DayhoffStat, physico-chemical classes, inclusion-body propensity,
+    A280 per mg/ml) alongside Biopython's GRAVY, aromaticity, and instability index.
+    """
+    from . import pepstats as _ps
+
     analysis = ProteinAnalysis(sequence)
     profile = hydropathy_profile(sequence)
     reduced, oxidised = analysis.molar_extinction_coefficient()
@@ -202,6 +224,24 @@ def compute_properties(sequence: str, header: str = "(unnamed)") -> SequenceProp
         },
         hydropathy_min=min(profile, key=lambda p: p[1]),
         hydropathy_max=max(profile, key=lambda p: p[1]),
+        average_residue_weight=_ps.average_residue_weight(
+            analysis.molecular_weight(), len(sequence)
+        ),
+        charge_vs_ph=_ps.charge_table(sequence),
+        dayhoff_stats=_ps.dayhoff_stats(sequence),
+        property_classes=_ps.property_classes(sequence),
+        inclusion_body=_ps.inclusion_body_propensity(sequence),
+        extinction_per_mg_ml={
+            "reduced": _ps.extinction_per_mg_ml(
+                float(analysis.molar_extinction_coefficient()[0]),
+                analysis.molecular_weight(),
+            ),
+            "oxidised": _ps.extinction_per_mg_ml(
+                float(analysis.molar_extinction_coefficient()[1]),
+                analysis.molecular_weight(),
+            ),
+        },
+        solution_ionisation_method="Biopython charge_at_pH; EMBOSS pepstats-equivalent classes",
         method={
             "molecular_weight": "Bio.SeqUtils.ProtParam.ProteinAnalysis.molecular_weight (average)",
             "isoelectric_point": "ProteinAnalysis.isoelectric_point (bidimensional titration)",

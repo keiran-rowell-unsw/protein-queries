@@ -19,6 +19,7 @@ from .tools import (
     COMPUTE_PROPERTIES,
     FETCH_ENTRY,
     FETCH_FASTA,
+    PLOT_HYDROPATHY,
     SEARCH_UNIPROT,
 )
 
@@ -310,6 +311,19 @@ def dispatch(
             return uniprot.entry(arguments["accession"])
         if name == FETCH_FASTA:
             return uniprot.fasta(arguments["accession"])
+        if name == PLOT_HYDROPATHY:
+            from .plots import plot_hydropathy
+
+            out = plot_hydropathy(
+                arguments["sequence"],
+                label=arguments.get("label") or "(user-supplied sequence)",
+                window=int(arguments.get("window") or 19),
+                out_path=arguments.get("out_path") or "out/hydropathy.png",
+            )
+            out["_provenance"] = _provenance(
+                "local-compute", "plot_hydropathy", "sequence", scale="Kyte-Doolittle"
+            )
+            return out
         if name in {COMPUTE_PROPERTIES, CHROMOPHORE}:
             from . import properties as local
 

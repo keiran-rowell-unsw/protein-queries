@@ -15,9 +15,24 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-UNIPROT_ACCESSION = re.compile(r"\b[A-Z0-9]{5,6}(?:-[0-9]{1,2})?\b")
+# UniProt canonical accession grammar, documented as: 8 or 10 characters, first is A,
+# O or Q, second is a digit, and "-" separates isoform suffixes. The previous naive
+# [A-Z0-9]{5,6} flagged ordinary uppercase words (BLAST, KKKDDD) as accessions.
+UNIPROT_ACCESSION = re.compile(
+    r"\b(?:UPI-[0-9A-F]{8}|[ABOPQR][0-9][A-Z0-9]{3,4}|[ABOPQR][0-9][A-Z0-9]{6,8})"
+    r"(?:-[0-9]{1,2})?\b"
+)
 PDB_ID = re.compile(r"\b[0-9][A-Za-z0-9]{3}\b")
 GO_TERM = re.compile(r"\bGO:[0-9]{7}\b")
+# Only words that claim an actual rendered IMAGE. Deliberately excludes "profile" and
+# "curve": a hydropathy profile is legitimate tabular data returned by
+# compute_sequence_properties, and treating the word as a plot claim blocks correct answers.
+PLOT_LANGUAGE = re.compile(
+    r"\b(?:the|this|a|your)?\s*(?:plot|figure|graph|chart)\b|"
+    r"\b(?:plotted|rendered|depicted|as shown)\b|"
+    r"\b(?:x-axis|y-axis|axes)\b",
+    re.IGNORECASE,
+)
 RESIDUE_POS = re.compile(r"\b(?:res(?:idue)?|aa)\s*#?\s*[0-9]+", re.IGNORECASE)
 
 # Identifiers that look factual but may legitimately appear without a tool call.
@@ -108,6 +123,7 @@ def unsupported_claims(
     evidence: Evidence,
     *,
     min_calls: int = 1,
+    question: str = "",
     question_subject_check: list[str] | None = None,
 ) -> list[str]:
     """Return human-readable reasons the answer is not backed by tool output."""
@@ -126,10 +142,16 @@ def unsupported_claims(
     claims = extract_claims(answer)
     for kind, tokens in claims.items():
         for token in sorted(tokens):
-            if token.upper() not in corpus:
-                problems.append(
-                    f"{kind[:-1]} {token} appears in the answer but was never returned by a tool"
-                )
+            if token.upper() in corpus:
+                continue
+            # A run of residues quoted from the user's own pasted sequence is not a
+            # database identifier. Only treat it as a claim about the record when it is
+            # absent from the question as well as the tool output.
+            if kind == "accessions" and token.upper().replace("-01", "") in question.upper():
+                continue
+            problems.append(
+                f"{kind[:-1]} {token} appears in the answer but was never returned by a tool"
+            )
     # Sequence/residue claims need a sequence-bearing call: fetch_fasta, or an entry
     # payload carrying the sequence/length that the claim depends on.
     if RESIDUE_POS.search(answer) and not any(
@@ -142,6 +164,18 @@ def unsupported_claims(
         problems.append(
             "residue-level claim without fetch_fasta or fetch_uniprot_entry in this run"
         )
+    # A figure may only be described by the tool that drew it. Without this, a model that
+    # has the underlying numbers will happily "describe" a plot it never rendered.
+    if PLOT_LANGUAGE.search(answer) and not evidence.used_tool("plot_hydropathy"):
+        problems.append(
+            "describes a plot/figure but plot_hydropathy was never called in this run"
+        )
+    if evidence.used_tool("plot_hydropathy"):
+        rendered = [
+            r for r in evidence.raw_results if '"image"' in r or "hydropathy" in r.lower()
+        ]
+        if not rendered:
+            problems.append("plot_hydropathy result is not on the evidence record")
     return problems
 
 
@@ -157,7 +191,11 @@ def prove_answer(
     """Return the answer if it is grounded; otherwise raise or replace it."""
     mismatch = subject_mismatch(question, evidence, ignore_accessions=trusted_accessions)
     problems = unsupported_claims(
-        answer, evidence, min_calls=min_calls, question_subject_check=mismatch
+        answer,
+        evidence,
+        min_calls=min_calls,
+        question=question,
+        question_subject_check=mismatch,
     )
     if not problems:
         return answer

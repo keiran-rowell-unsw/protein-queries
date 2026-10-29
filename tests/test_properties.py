@@ -8,6 +8,8 @@ fixture revealed: wtGFP carries Ser65, so TYG/G[FYL]G cores miss the real chromo
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -139,3 +141,69 @@ def test_missing_absorption_is_not_annotated_never_absent() -> None:
     photo = result["photochemistry"]
     assert photo["absorption"] is None
     assert "not evidence" in photo["absorption_note"]
+
+
+# --- pepstats-equivalence (constants read from EMBOSS source, not recalled) ---------
+
+
+def test_pepstats_equivalent_fields_present() -> None:
+    props = compute_properties(
+        "MTMTRYSTALKSTALEGCNHNSQITWQFYVPKAGDLLLLLLLLIVVVVVIKKKDDDIIIIIIIIIIIIILLLLLL",
+        "x",
+    ).as_dict()
+    for key in (
+        "average_residue_weight_da",
+        "charge_vs_ph",
+        "amino_acid_dayhoff_stats",
+        "physico_chemical_classes",
+        "inclusion_body_propensity",
+        "a280_extinction_per_mg_ml_M-1cm-1",
+    ):
+        assert props.get(key), f"missing pepstats-equivalent field: {key}"
+
+
+def test_charge_table_spans_pH_and_brackets_the_pI() -> None:
+    from protein_agent.pepstats import charge_table
+
+    table = charge_table("MTMTRYSTALKSTALEGCNHNSQITWQFYVPKAGDLLLLLLLL")
+    charges = table["ph_to_net_charge"]
+    assert "3.0" in charges and "11.0" in charges
+    # charge must decrease monotonically as pH rises, and cross zero near the pI
+    values = [charges[k] for k in sorted(charges, key=float)]
+    assert values == sorted(values, reverse=True), "charge must fall as pH rises"
+    assert any(v <= 0 for v in values) and any(v >= 0 for v in values)
+
+
+def test_dayhoff_stat_is_mole_percent_over_reference_frequency() -> None:
+    from protein_agent.pepstats import DAYHOFF_FREQUENCY, dayhoff_stats
+
+    seq = "AAAAA" + "C" * 0  # 5 Ala out of 5 residues = 100 mol%
+    stats = dayhoff_stats(seq)
+    assert stats["A"]["number"] == 5
+    assert stats["A"]["mole_percent"] == pytest.approx(100.0)
+    assert stats["A"]["dayhoff_stat"] == pytest.approx(100.0 / DAYHOFF_FREQUENCY["A"], abs=1e-3)
+    assert stats["W"]["number"] == 0 and stats["W"]["dayhoff_stat"] == 0.0
+
+
+def test_inclusion_body_probability_is_reported_not_quoted_when_invalid() -> None:
+    """The EMBOSS quadratic is a parabola: outside cv in [0, 2*CVDISC] the value is
+    meaningless as a probability and a negative one can occur. Direction must come from
+    `class`, which is what EMBOSS itself branches on."""
+    from protein_agent.pepstats import inclusion_body_propensity
+
+    extreme = inclusion_body_propensity("NNNNGGGGPPPPSSSS" * 3 + "KKKDDD")
+    assert extreme["probability_inclusion_bodies"] < 0.0  # impossible as a probability
+    assert extreme["probability_is_meaningful"] is False
+    assert extreme["read_the_class_not_the_probability"] is True
+    assert extreme["class"] == "likely_insoluble"  # direction still correct
+
+    mild = inclusion_body_propensity("MTMTRYSTALKSTALEGCNHNSQITWQFYVPKAGDL")
+    assert 0.0 <= mild["probability_inclusion_bodies"] <= 1.0
+    assert mild["probability_is_meaningful"] is True
+
+
+def test_pepstats_caveats_are_carried_through() -> None:
+    props = compute_properties("MTMTRYSTALK", "x").as_dict()
+    text = json.dumps(props)
+    assert "EMBOSS pepstats.c" in text or "LAM1" in text, "provenance of the constants"
+    assert props["inclusion_body_propensity"]["caveats"]
