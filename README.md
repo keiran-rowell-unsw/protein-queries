@@ -17,10 +17,16 @@ the UniProt REST API and the PDBe-KB MCP servers.
 ## Local sequence-report interface (no PBS queue)
 
 A researcher can paste one protein sequence into a local web form and download a
-self-contained `report.html`, `report.json`, and `hydropathy.png`. It uses the installed
-Biopython/pepstats-equivalent calculations and hydropathy plotter **on this node**; it
-does not call the inference gateway, UniProt, PDBe, or any queued program. The report
-explicitly marks database identity, experimental structure, and disorder prediction as
+`report.html`, `report.json`, and `hydropathy.png`. It uses the installed
+Biopython/pepstats-equivalent calculations and hydropathy plotter **on this node**, plus
+metapredict V3 sequence-based disorder predictions and `disorder.png` when available
+(for sequences of 25–2,000 residues). Shorter/longer sequences or predictor failures are
+explicitly reported as skipped/unavailable, never filled in. The report includes
+composition, charge-versus-pH, extinction estimates, residue groups, a cautious
+E. coli inclusion-body composition flag and an optional chromophore motif candidate scan.
+Advanced values and method details remain in the downloadable JSON; the HTML prioritises
+results and caveats. It does not run BLAST, structure prediction, UniProt lookup, PDBe
+retrieval, AI summaries, or queued programs. Identity and experimental structure remain
 unresolved. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
 than 10,000 residues are rejected rather than silently changed.
 
@@ -42,6 +48,8 @@ end. It accepts a sequence in the user's authenticated PUN, stores it temporaril
 `/srv/scratch/sbf/protein_queries/.venv/bin/python -m protein_agent.report` on `katana3`
 via non-interactive per-user SSH. The temporary input is deleted; results remain in that
 private directory. There is no PBS job, persistent listener on katana3, or inference key.
+The metapredict step runs within the same SSH request and is capped at 2,000 residues
+to avoid tying up the per-user portal process for unusually long analyses.
 
 ```bash
 cd ~/ondemand/dev

@@ -27,6 +27,8 @@ dependencies = [
     "rich>=13.7",
     "biopython>=1.84",
     "matplotlib>=3.11.2",
+    "metapredict==3.1.1",
+    "torch>=2.3",  # resolved from the CPU index below, not PyPI
 ]
 
 [project.optional-dependencies]
@@ -58,3 +60,14 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+
+# CPU-only torch: the node has no GPU (`nvidia-smi` absent). Without this pin,
+# metapredict's `torch>=2.3` resolves the CUDA wheel, which consumes ~4.8 GB and then
+# fails to import for want of libcufile.so.0.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]

@@ -42,6 +42,7 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     def compute(text, folder):
         (folder / "input.fasta").write_text(text)
         generate_report(folder / "input.fasta", folder)
+        (folder / "disorder.png").write_bytes(b"test image")
         (folder / "input.fasta").unlink()
 
     monkeypatch.setattr(ood_app, "run_report", compute)
@@ -58,6 +59,11 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     report = request("GET", url.removeprefix("/pun/dev/protein-queries"))
     assert report["status"] == "200 OK"
     assert b"Sequence analysis report" in report["body"]
+    image = request("GET", url.removeprefix("/pun/dev/protein-queries").replace(
+        "report.html", "disorder.png"
+    ))
+    assert image["status"] == "200 OK"
+    assert image["headers"]["Content-Type"] == "image/png"
     assert request("GET", "/results/" + "a" * 32 + "/../../input.fasta")["status"] == "404 Not Found"
 
 

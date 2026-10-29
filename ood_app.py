@@ -22,7 +22,8 @@ PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", "/srv/scratch/sbf/protein_que
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
-FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json", "hydropathy.png": "image/png"}
+FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
+         "hydropathy.png": "image/png", "disorder.png": "image/png"}
 CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'"
 
 
