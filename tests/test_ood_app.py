@@ -38,6 +38,10 @@ def test_manifest_and_wsgi_entrypoint():
 
 def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "protein_agent.report.find_sequence_annotations",
+        lambda _seq: {"status": "not_found", "reason": "No exact match under these criteria."},
+    )
 
     def compute(text, folder, accession=""):
         (folder / "input.fasta").write_text(text)

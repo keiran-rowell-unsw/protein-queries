@@ -18,7 +18,7 @@ from pathlib import Path
 from .disorder import predict_disorder
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
-from .uniprot_report import fetch_annotations
+from .uniprot_report import fetch_annotations, find_sequence_annotations
 
 MAX_INPUT_BYTES = 100_000
 MAX_RESIDUES = 10_000
@@ -62,7 +62,15 @@ def _uniprot_section(record: dict) -> str:
             "To add annotations, enter a UniProt accession with your sequence.</p>"
         )
     if record["status"] != "verified":
-        return "<h2>UniProt annotations</h2><p>Not included: " + html.escape(record["reason"]) + "</p>"
+        candidates = record.get("candidates") or []
+        suggestion = (
+            " Candidate accessions: " + ", ".join(html.escape(acc) for acc in candidates) + "."
+            if candidates else ""
+        )
+        return (
+            "<h2>UniProt annotations</h2><p>Not included: "
+            + html.escape(record["reason"]) + suggestion + "</p>"
+        )
     rows = []
     for feature in record["features"]:
         start, end = feature["start"], feature["end"]
@@ -226,14 +234,14 @@ def generate_report(input_path: Path, output_dir: Path, *, accession: str = "") 
     header, sequence = parse_sequence(input_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
     data = compute_properties(sequence, header=header).as_dict()
-    data["input_source"] = "user-supplied sequence (not database-identified)"
+    data["input_source"] = "user-supplied sequence; UniProt identity is assessed separately"
     data["generated_at_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
     plot_hydropathy(sequence, label=header, out_path=output_dir / "hydropathy.png")
     data["disorder_prediction"] = predict_disorder(sequence, output_dir / "disorder.png")
     data["chromophore_candidates"] = chromophore_candidates(sequence)
     data["uniprot"] = (
         fetch_annotations(sequence, accession) if accession.strip()
-        else {"status": "not_requested"}
+        else find_sequence_annotations(sequence)
     )
     (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     report = output_dir / "report.html"
@@ -245,7 +253,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create an offline report from one protein sequence")
     parser.add_argument("--input", type=Path, required=True, help="single FASTA record or bare sequence")
     parser.add_argument("--output", type=Path, required=True, help="report directory")
-    parser.add_argument("--accession", default="", help="optional UniProt accession; exact sequence match required")
+    parser.add_argument("--accession", default="", help="optional UniProt accession; otherwise search exact sequence in UniParc")
     args = parser.parse_args()
     try:
         report = generate_report(args.input, args.output, accession=args.accession)

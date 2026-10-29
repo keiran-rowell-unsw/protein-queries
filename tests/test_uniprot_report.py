@@ -2,11 +2,12 @@
 
 import httpx
 import respx
+from Bio.SeqUtils.CheckSum import crc64
 
 from protein_agent.config import Settings
 from protein_agent.report import _uniprot_section
 from protein_agent.retrieval import UniProtClient
-from protein_agent.uniprot_report import fetch_annotations
+from protein_agent.uniprot_report import fetch_annotations, find_sequence_annotations
 
 SEQUENCE = "ACDEFGHIKLMNPQRSTVWY" * 2
 ENTRY = {
@@ -76,3 +77,86 @@ def test_not_found_is_not_a_negative_biological_claim():
 
 def test_invalid_accession_never_queries():
     assert fetch_annotations(SEQUENCE, "../etc/passwd")["status"] == "invalid"
+
+
+@respx.mock
+def test_sequence_checksum_search_verifies_candidate_and_entry():
+    checksum = crc64(SEQUENCE).removeprefix("CRC-")
+    endpoint = respx.get("https://uniprot.test/uniparc/search").mock(
+        return_value=httpx.Response(200, json={"results": [{
+            "sequence": {"value": SEQUENCE, "length": len(SEQUENCE), "crc64": checksum},
+            "uniProtKBAccessions": ["Q12345"],
+        }]})
+    )
+    respx.get("https://uniprot.test/uniprotkb/Q12345.json").mock(
+        return_value=httpx.Response(200, json=ENTRY)
+    )
+    result = find_sequence_annotations(SEQUENCE, settings=Settings(uniprot_base_url="https://uniprot.test"))
+    assert result["status"] == "verified"
+    assert result["accession"] == "Q12345"
+    assert result["lookup"]["checksum"] == checksum
+    assert endpoint.called
+    assert endpoint.calls[0].request.url.params["query"] == f"checksum:{checksum}"
+    assert SEQUENCE not in str(endpoint.calls[0].request.url)
+
+
+@respx.mock
+def test_checksum_collision_must_verify_full_sequence():
+    respx.get("https://uniprot.test/uniparc/search").mock(
+        return_value=httpx.Response(200, json={"results": [{
+            "sequence": {"value": "A" * len(SEQUENCE), "length": len(SEQUENCE)},
+            "uniProtKBAccessions": ["Q12345"],
+        }]})
+    )
+    result = find_sequence_annotations(SEQUENCE, settings=Settings(uniprot_base_url="https://uniprot.test"))
+    assert result["status"] == "not_found"
+    assert "accession" not in result
+
+
+@respx.mock
+def test_inactive_accession_does_not_block_unique_current_match():
+    respx.get("https://uniprot.test/uniparc/search").mock(
+        return_value=httpx.Response(200, json={"results": [{
+            "sequence": {"value": SEQUENCE, "length": len(SEQUENCE)},
+            "uniProtKBAccessions": ["Q12345", "Q54321.1"],
+        }]})
+    )
+    respx.get("https://uniprot.test/uniprotkb/Q12345.json").mock(
+        return_value=httpx.Response(200, json=ENTRY)
+    )
+    respx.get("https://uniprot.test/uniprotkb/Q54321.json").mock(
+        return_value=httpx.Response(303, json={"entryType": "Inactive"})
+    )
+    result = find_sequence_annotations(SEQUENCE, settings=Settings(uniprot_base_url="https://uniprot.test"))
+    assert result["status"] == "verified"
+    assert result["accession"] == "Q12345"
+    assert fetch_annotations(SEQUENCE, "Q54321", client=make_client())["status"] == "inactive"
+
+
+@respx.mock
+def test_multiple_exact_accessions_are_ambiguous_not_first_hit():
+    respx.get("https://uniprot.test/uniparc/search").mock(
+        return_value=httpx.Response(200, json={"results": [{
+            "sequence": {"value": SEQUENCE, "length": len(SEQUENCE)},
+            "uniProtKBAccessions": ["Q12345", "Q54321"],
+        }]})
+    )
+    for acc in ("Q12345", "Q54321"):
+        respx.get(f"https://uniprot.test/uniprotkb/{acc}.json").mock(
+            return_value=httpx.Response(200, json={**ENTRY, "primaryAccession": acc})
+        )
+    result = find_sequence_annotations(SEQUENCE, settings=Settings(uniprot_base_url="https://uniprot.test"))
+    assert result["status"] == "ambiguous"
+    assert set(result["candidates"]) == {"Q12345", "Q54321"}
+    assert "features" not in result
+    assert "Q12345" in _uniprot_section(result)
+
+
+@respx.mock
+def test_no_checksum_hit_is_not_a_biological_absence():
+    respx.get("https://uniprot.test/uniparc/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    result = find_sequence_annotations(SEQUENCE, settings=Settings(uniprot_base_url="https://uniprot.test"))
+    assert result["status"] == "not_found"
+    assert "identity is unresolved" in result["reason"]

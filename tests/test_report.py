@@ -16,6 +16,14 @@ from protein_agent.report import generate_report, parse_sequence
 from protein_agent.web import make_handler
 
 
+@pytest.fixture(autouse=True)
+def no_live_uniparc(monkeypatch):
+    monkeypatch.setattr(
+        "protein_agent.report.find_sequence_annotations",
+        lambda _seq: {"status": "not_found", "reason": "No exact match under these criteria."},
+    )
+
+
 def test_report_is_complete_and_escapes_header(tmp_path):
     source = tmp_path / "input.fa"
     source.write_text(">hello <script>alert(1)</script>\nACDEFGHIKLMNPQRSTVWY\n")

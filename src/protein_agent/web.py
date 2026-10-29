@@ -28,7 +28,7 @@ textarea{{width:100%;box-sizing:border-box}}button{{padding:.6rem 1rem}}</style>
 {message}<form method="post" action="/run"><label for="sequence">Protein sequence</label><br>
 <textarea id="sequence" name="sequence" rows="12" required maxlength="100000"></textarea><br>
 <label for="accession">UniProt accession (optional; exact sequence match required)</label><br>
-<input id="accession" name="accession" maxlength="10" pattern="[A-Za-z0-9]{{6,10}}"><br>
+<input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{{6,10}}(-[0-9]{{1,2}})?" placeholder="e.g. P04637 or P04637-1" inputmode="text" autocomplete="off" spellcheck="false"><br>
 <button type="submit">Generate report</button></form></body></html>"""
 
 

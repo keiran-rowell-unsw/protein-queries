@@ -24,7 +24,11 @@ from .tools import (
 )
 
 PROTEIN_MIN_RUN = 8
-ACCESSION_RE = re.compile(r"^[A-Z0-9]{6,10}$|^[A-Z0-9]{5,10}-\d{2}$")
+# Isoform suffixes are optional and 1-2 digits. Written as a single alternation inside one
+# group on purpose: the previous `^[A-Z0-9]{6,10}$|^[A-Z0-9]{5,10}-\d{2}$` was ordered and
+# greedy, so it silently rejected the common single-digit case (P04637-1) while accepting
+# P04637-12.
+ACCESSION_RE = re.compile(r"(?:[A-Z0-9]{6,10}|[A-Z0-9]{5,10}-[0-9]{1,2})\Z")
 DEFAULT_FIELDS = [
     "accession",
     "id",
@@ -220,6 +224,11 @@ class UniProtClient:
         if not ACCESSION_RE.match(acc):
             raise RetrievalError(f"{accession!r} is not a well-formed UniProt accession.")
         response = self._client.get(f"/uniprotkb/{acc}.json")
+        if response.status_code in {301, 302, 303, 307, 308}:
+            raise RetrievalError(
+                f"UniProt accession {acc} is inactive or redirected; "
+                "verify its current primary accession explicitly."
+            )
         if response.status_code == 404:
             raise RetrievalError(
                 f"UniProt has no entry {acc} (404). Treat the identity as unresolved; do not guess."

@@ -25,11 +25,20 @@ explicitly reported as skipped/unavailable, never filled in. The report includes
 composition, charge-versus-pH, extinction estimates, residue groups, a cautious
 E. coli inclusion-body composition flag and an optional chromophore motif candidate scan.
 Advanced values and method details remain in the downloadable JSON; the HTML prioritises
-results and caveats. An **optional UniProt accession** triggers a live UniProtKB entry
-fetch; signal peptides, glycosylation sites, modified residues, cross-links and annotated
-absorption are displayed **only if the submitted sequence exactly matches the entry's
-canonical sequence**. Otherwise annotations are withheld and the mismatch or retrieval
-failure is shown. No accession is guessed from a sequence. It does not run BLAST,
+results and caveats. With **no accession**, the app computes the sequence's UniProt CRC64
+checksum (Biopython), searches the UniParc exact-sequence index, verifies that the entire
+returned sequence matches, and checks up to four linked UniProtKB canonical entries.
+If exactly one matches, the verified accession and its annotations are shown. If matches
+are ambiguous, it lists candidates and asks the researcher to enter a specific accession;
+it never selects the first hit. An **optional UniProt accession** bypasses auto-search and
+fetches that UniProtKB entry directly. Signal peptides, glycosylation sites, modified
+residues, cross-links and annotated absorption are displayed **only if the submitted
+sequence exactly matches that entry's canonical sequence**. A missing hit, isoform or
+construct mismatch, network failure, or ambiguous match is stated, not guessed past.
+Only a checksum goes into the search URL; the full sequence is verified against its
+returned record. This is an **exact** search, not a BLAST or similarity search: variants,
+tags, fragments and isoforms without a canonical match will not be identified.
+It does not run BLAST,
 AlphaFold confidence analysis, structure prediction, PDBe retrieval, Protein-sol,
 SoDoPE, SignalP/Razor, AI summaries, ChimeraX surface MLP or queued programs.
 Metapredict predicts disorder, **not solubility**. Identity is unresolved without a
@@ -43,7 +52,7 @@ For a local test only:
 # On the same node: visit http://127.0.0.1:8765/
 # Or generate a report without a web service:
 .venv/bin/python -m protein_agent.report --input input.fasta --output results
-# With a known, matching UniProt accession:
+# With a known, matching UniProt accession (otherwise exact-sequence search runs):
 .venv/bin/python -m protein_agent.report --input input.fasta --output results --accession YOUR_ACCESSION
 ```
 

@@ -45,12 +45,13 @@ def page(prefix, csrf, message=""):
 <style>body{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}
 textarea{width:100%%;box-sizing:border-box}button{padding:.6rem 1rem}</style></head><body>
 <h1>Protein Sequence Report</h1><p>One FASTA record or bare protein sequence; up to 10,000
-standard amino acids. Composition and hydropathy are calculated on katana3; no identity
-or structure is inferred. No PBS submission is made.</p>
+standard amino acids. The report searches for an exact UniProt-linked sequence; if
+multiple entries match, you can choose one with an accession. No structure is inferred.
+No PBS submission is made.</p>
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
 <label for="sequence">Sequence</label><br><textarea id="sequence" name="sequence" rows="12"
 maxlength="100000" required></textarea><br>
-<label for="accession">UniProt accession (optional; must match your sequence exactly)</label><br>
+<label for="accession">UniProt accession (optional; leave blank for exact sequence search)</label><br>
 <input id="accession" name="accession" maxlength="10" pattern="[A-Za-z0-9]{6,10}"><br>
 <button type="submit">Generate report</button>
 </form></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
