@@ -14,6 +14,33 @@ the UniProt REST API and the PDBe-KB MCP servers.
 | `tests/test_grounding.py` | Fails if an unbacked answer can reach the user |
 | `.env.example` | Template; copy to `.env` (git-ignored) |
 
+## Local sequence-report interface (no PBS queue)
+
+A researcher can paste one protein sequence into a local web form and download a
+self-contained `report.html`, `report.json`, and `hydropathy.png`. It uses the installed
+Biopython/pepstats-equivalent calculations and hydropathy plotter **on this node**; it
+does not call the inference gateway, UniProt, PDBe, or any queued program. The report
+explicitly marks database identity, experimental structure, and disorder prediction as
+unresolved. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
+than 10,000 residues are rejected rather than silently changed.
+
+For a local test only:
+
+```bash
+.venv/bin/python -m protein_agent.web --port 8765 --output "$HOME/protein-reports"
+# On the same node: visit http://127.0.0.1:8765/
+# Or generate a report without a web service:
+.venv/bin/python -m protein_agent.report --input input.fasta --output results
+```
+
+**Not yet an installed OpenOnDemand app.** This node has no OpenOnDemand installation;
+site administrators must supply the OOD host/location and approved authenticated proxy
+and service-management mechanism. The web server has **no built-in login** and must
+never be bound to a public interface or exposed to researchers without access control;
+on a shared node even loopback is accessible to other local users. Keep report outputs
+in a protected directory and set an appropriate retention policy before deployment.
+Do not run a permanent web server on a shared login node without site approval.
+
 ## Hard rule: no memory-only answers
 
 Every user-visible statement about a specific protein must be backed by a tool call that
