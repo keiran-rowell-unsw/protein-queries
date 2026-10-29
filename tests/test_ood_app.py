@@ -39,7 +39,7 @@ def test_manifest_and_wsgi_entrypoint():
 def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
 
-    def compute(text, folder):
+    def compute(text, folder, accession=""):
         (folder / "input.fasta").write_text(text)
         generate_report(folder / "input.fasta", folder)
         (folder / "disorder.png").write_bytes(b"test image")
@@ -96,6 +96,8 @@ def test_remote_run_uses_ssh_without_shell_or_pbs(monkeypatch, tmp_path):
     assert shlex.split(args[-1])[-4:] == ["--input", str(folder / "input.fasta"), "--output", str(folder)]
     assert kwargs["timeout"] == 90 and kwargs["check"] is False
     assert not (folder / "input.fasta").exists()
+    ood_app.run_report("ACDE", folder, "Q12345")
+    assert shlex.split(seen[-1][0][-1])[-2:] == ["--accession", "Q12345"]
 
 
 @pytest.mark.parametrize("host", ["bad host", "-bad", "host;echo"])

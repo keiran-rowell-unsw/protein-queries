@@ -26,7 +26,7 @@ def test_report_is_complete_and_escapes_header(tmp_path):
     assert "<h2>Methods</h2>" not in page
     assert "Charge at different pH values" in page
     assert "Download full results (JSON)" in page
-    assert "No\nexperimental structure or expression outcome was determined." in page
+    assert "a match does not prove an experimental structure or expression outcome" in page
     assert "Predicted disorder" in page
     assert "Other sequence estimates" in page
     assert "Amino-acid composition" in page

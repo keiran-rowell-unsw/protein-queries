@@ -25,9 +25,15 @@ explicitly reported as skipped/unavailable, never filled in. The report includes
 composition, charge-versus-pH, extinction estimates, residue groups, a cautious
 E. coli inclusion-body composition flag and an optional chromophore motif candidate scan.
 Advanced values and method details remain in the downloadable JSON; the HTML prioritises
-results and caveats. It does not run BLAST, structure prediction, UniProt lookup, PDBe
-retrieval, AI summaries, or queued programs. Identity and experimental structure remain
-unresolved. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
+results and caveats. An **optional UniProt accession** triggers a live UniProtKB entry
+fetch; signal peptides, glycosylation sites, modified residues, cross-links and annotated
+absorption are displayed **only if the submitted sequence exactly matches the entry's
+canonical sequence**. Otherwise annotations are withheld and the mismatch or retrieval
+failure is shown. No accession is guessed from a sequence. It does not run BLAST,
+AlphaFold confidence analysis, structure prediction, PDBe retrieval, Protein-sol,
+SoDoPE, SignalP/Razor, AI summaries, ChimeraX surface MLP or queued programs.
+Metapredict predicts disorder, **not solubility**. Identity is unresolved without a
+matching accession, and experimental structure is never implied. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
 than 10,000 residues are rejected rather than silently changed.
 
 For a local test only:
@@ -37,6 +43,8 @@ For a local test only:
 # On the same node: visit http://127.0.0.1:8765/
 # Or generate a report without a web service:
 .venv/bin/python -m protein_agent.report --input input.fasta --output results
+# With a known, matching UniProt accession:
+.venv/bin/python -m protein_agent.report --input input.fasta --output results --accession YOUR_ACCESSION
 ```
 
 ### Open OnDemand Passenger app (no PBS queue)

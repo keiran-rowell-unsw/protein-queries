@@ -18,6 +18,7 @@ from pathlib import Path
 from .disorder import predict_disorder
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
+from .uniprot_report import fetch_annotations
 
 MAX_INPUT_BYTES = 100_000
 MAX_RESIDUES = 10_000
@@ -51,6 +52,64 @@ def parse_sequence(text: str) -> tuple[str, str]:
 
 def _row(name: str, value: object) -> str:
     return f"<tr><th scope='row'>{html.escape(name)}</th><td>{html.escape(str(value))}</td></tr>"
+
+
+def _uniprot_section(record: dict) -> str:
+    """Display only fetched fields for an exact canonical-sequence match."""
+    if record["status"] == "not_requested":
+        return (
+            "<h2>UniProt annotations</h2><p>No accession was supplied. "
+            "To add annotations, enter a UniProt accession with your sequence.</p>"
+        )
+    if record["status"] != "verified":
+        return "<h2>UniProt annotations</h2><p>Not included: " + html.escape(record["reason"]) + "</p>"
+    rows = []
+    for feature in record["features"]:
+        start, end = feature["start"], feature["end"]
+        position = str(start) if start == end else f"{start}-{end}"
+        evidence = ", ".join(
+            " ".join(str(item[key]) for key in ("code", "source", "id") if item.get(key))
+            for item in feature["evidence"]
+        )
+        text = f"Residue(s) {position}: {feature['description'] or 'No description annotated'}"
+        if evidence:
+            text += f" (evidence: {evidence})"
+        rows.append(_row(feature["type"], text))
+    annotations = (
+        f"<table>{''.join(rows)}</table>" if rows else
+        "<p>No matching processing or modification features are annotated in this entry.</p>"
+    )
+    absorption = record["absorption"]
+    if absorption:
+        maximum = absorption.get("max_nm")
+        notes = "; ".join(absorption.get("note") or [])
+        absorption_text = html.escape(
+            f"Annotated absorption maximum: {maximum} nm" if maximum is not None
+            else "Absorption annotated (no maximum reported)"
+        )
+        if notes:
+            absorption_text += ". " + html.escape(notes)
+        evidence = ", ".join(
+            " ".join(str(item[key]) for key in ("code", "source", "id") if item.get(key))
+            for item in absorption.get("evidence") or []
+        )
+        if evidence:
+            absorption_text += " (evidence: " + html.escape(evidence) + ")"
+        annotations += f"<p>{absorption_text}</p>"
+    else:
+        annotations += "<p>Absorption is not annotated in this entry.</p>"
+    url = html.escape(record["source_url"], quote=True)
+    identity = html.escape(
+        f"{record['accession']} · {record['organism'] or 'organism not provided'} "
+        f"· {record['entry_type'] or 'review status not provided'}"
+    )
+    date = html.escape(record["retrieved_at"] or "retrieval date not available")
+    return (
+        "<h2>UniProt annotations</h2>"
+        f"<p>Canonical sequence matched exactly: <a href=\"{url}\">{identity}</a> "
+        f"(retrieved {date}). Positions refer to that canonical sequence.</p>"
+        + annotations
+    )
 
 
 def render_html(data: dict, *, generated_at: str) -> str:
@@ -150,17 +209,18 @@ a{{color:#0057b8}}
 <p>Exploratory E. coli inclusion-body composition flag: {expression_flag}. This simple
 sequence-only flag does not establish actual expression or solubility.</p></details>
 {motif_section}
+{_uniprot_section(data['uniprot'])}
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>
 <div class="note"><strong>What this report cannot tell you:</strong> These are sequence-derived
-estimates, not measurements. The sequence has not been identified in a database. No
-experimental structure or expression outcome was determined. A missing prediction is
-shown as unavailable, not as evidence that a property is absent.</div></body></html>
+estimates, not measurements. A UniProt entry is shown only when its canonical sequence
+matches exactly; a match does not prove an experimental structure or expression outcome.
+A missing annotation or prediction is not evidence that a property is absent.</div></body></html>
 """
 
 
-def generate_report(input_path: Path, output_dir: Path) -> Path:
+def generate_report(input_path: Path, output_dir: Path, *, accession: str = "") -> Path:
     if input_path.stat().st_size > MAX_INPUT_BYTES:
         raise SequenceError("input exceeds the 100 KB limit")
     header, sequence = parse_sequence(input_path.read_text(encoding="utf-8"))
@@ -171,6 +231,10 @@ def generate_report(input_path: Path, output_dir: Path) -> Path:
     plot_hydropathy(sequence, label=header, out_path=output_dir / "hydropathy.png")
     data["disorder_prediction"] = predict_disorder(sequence, output_dir / "disorder.png")
     data["chromophore_candidates"] = chromophore_candidates(sequence)
+    data["uniprot"] = (
+        fetch_annotations(sequence, accession) if accession.strip()
+        else {"status": "not_requested"}
+    )
     (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     report = output_dir / "report.html"
     report.write_text(render_html(data, generated_at=data["generated_at_utc"]), encoding="utf-8")
@@ -181,9 +245,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create an offline report from one protein sequence")
     parser.add_argument("--input", type=Path, required=True, help="single FASTA record or bare sequence")
     parser.add_argument("--output", type=Path, required=True, help="report directory")
+    parser.add_argument("--accession", default="", help="optional UniProt accession; exact sequence match required")
     args = parser.parse_args()
     try:
-        report = generate_report(args.input, args.output)
+        report = generate_report(args.input, args.output, accession=args.accession)
     except (SequenceError, OSError, UnicodeError, ValueError) as exc:
         print(f"Report not generated: {exc}", file=sys.stderr)
         return 2

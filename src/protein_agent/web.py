@@ -27,6 +27,8 @@ textarea{{width:100%;box-sizing:border-box}}button{{padding:.6rem 1rem}}</style>
 (up to 10,000 standard amino acids); no database identity is inferred.</p>
 {message}<form method="post" action="/run"><label for="sequence">Protein sequence</label><br>
 <textarea id="sequence" name="sequence" rows="12" required maxlength="100000"></textarea><br>
+<label for="accession">UniProt accession (optional; exact sequence match required)</label><br>
+<input id="accession" name="accession" maxlength="10" pattern="[A-Za-z0-9]{{6,10}}"><br>
 <button type="submit">Generate report</button></form></body></html>"""
 
 
@@ -72,16 +74,18 @@ def make_handler(output_root: Path) -> type[BaseHTTPRequestHandler]:
 
                 raw = self.rfile.read(size).decode("utf-8", errors="strict")
                 fields = parse_qs(raw, keep_blank_values=True)
-                if set(fields) != {"sequence"} or len(fields["sequence"]) != 1:
+                if (set(fields) - {"sequence", "accession"} or "sequence" not in fields
+                        or len(fields["sequence"]) != 1 or len(fields.get("accession", [])) > 1):
                     raise SequenceError("submit exactly one sequence")
                 text = fields["sequence"][0]
+                accession = (fields.get("accession") or [""])[0].strip().upper()
                 token = secrets.token_hex(16)
                 folder = output_root / token
                 folder.mkdir(mode=0o700, parents=True)
                 source = folder / "input.fasta"
                 source.write_text(text, encoding="utf-8")
                 try:
-                    generate_report(source, folder)
+                    generate_report(source, folder, accession=accession)
                 finally:
                     source.unlink(missing_ok=True)
             except (SequenceError, UnicodeError, OSError, ValueError) as exc:
