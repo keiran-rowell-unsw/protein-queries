@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
@@ -32,6 +34,9 @@ def main(
         "block", "--on-unproven", help="block | warn (warn is for review only)."
     ),
     explain: bool = typer.Option(False, "--explain", help="Show the service/tool plan."),
+    fasta: str = typer.Option(
+        "", "--fasta", "-f", help="FASTA file; computes properties from the first record."
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Stub all network calls; exercises the loop logic only."
     ),
@@ -61,8 +66,47 @@ def main(
         console.print(table)
         return
 
+    if fasta:
+        from .properties import SequenceError, compute_properties, read_first_record
+
+        try:
+            header, sequence, warnings = read_first_record(fasta)
+        except SequenceError as exc:
+            console.print(f"[red]Unusable sequence:[/red] {settings.redact(str(exc))}")
+            console.print("Nothing was computed; fix the input rather than guessing it.")
+            raise typer.Exit(6) from None
+        report = compute_properties(sequence, header=header).as_dict()
+        report["warnings"] = warnings + report["warnings"]
+        for warning in report["warnings"]:
+            console.print(f"[yellow]input:[/yellow] {warning}")
+        console.print(f"[bold]{header}[/bold] · {report['length_residues']} residues")
+        table = Table(box=None, show_header=False)
+        table.add_column(justify="right", style="dim")
+        table.add_column(justify="left")
+        for key in (
+            "molecular_weight_da",
+            "isoelectric_point",
+            "net_charge_pH_7",
+            "gravy_kyte_doolittle",
+            "aromaticity_iron_dos_santos",
+            "instability_index_guruprasad",
+        ):
+            table.add_row(key.replace("_", " "), str(report[key]))
+        table.add_row(
+            "molar extinction (red/ox)",
+            " / ".join(str(v) for v in report["molar_extinction_coefficient_M-1cm-1"].values()),
+        )
+        table.add_row(
+            "hydropathy min/max",
+            f"{report['hydropathy_extremes']['min']} / {report['hydropathy_extremes']['max']}",
+        )
+        console.print(table)
+        console.print("[dim]computed from composition — no structure or expression implied[/dim]")
+        console.print_json(json.dumps(report))
+        return
+
     if not question.strip():
-        console.print("[red]Give a question, or use --list-models.[/red]")
+        console.print("[red]Give a question, a --fasta file, or use --list-models.[/red]")
         raise typer.Exit(1) from None
 
     agent = ProteinAgent(settings)

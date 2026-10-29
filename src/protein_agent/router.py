@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .tools import (
+    CHROMOPHORE,
+    COMPUTE_PROPERTIES,
     FETCH_ENTRY,
     FETCH_FASTA,
     PDBE_SEARCH,
@@ -47,19 +49,46 @@ class Plan:
 
     @property
     def tools(self) -> list[dict[str, Any]]:
+        from .tools import SEQUENCE_TOOLS
+
         wanted = set(self.tool_names)
-        return [t for t in UNIPROT_TOOLS if t["function"]["name"] in wanted]
+        return [
+            t
+            for t in (*UNIPROT_TOOLS, *SEQUENCE_TOOLS)
+            if t["function"]["name"] in wanted
+        ]
 
 
 def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None) -> Plan:
     """Return the tools worth advertising for this question."""
-    names = {FETCH_ENTRY}  # the minimum: no claim about a named protein without an entry
-    services = ["uniprot"]
-    reasons = ["resolve and verify the entry before summarising"]
+    names: set[str] = set()
+    services: list[str] = []
+    reasons: list[str] = []
 
+    is_sequence_query = bool(re.search(r"[ACDEFGHIKLMNPQRSTVWY]{20,}", question.upper()))
+    if is_sequence_query and not ACCESSION_RE.search(question):
+        # The subject is the sequence itself. It must not be attached to an accession, so
+        # the entry/fasta tools are withheld rather than merely discouraged.
+        names.update({COMPUTE_PROPERTIES, CHROMOPHORE})
+        services.append("local-compute")
+        reasons.append(
+            "sequence pasted: identity is unresolved from sequence alone, so answer only "
+            "from computed properties; UniProt text search cannot match a sequence"
+        )
+        return Plan(tuple(services), tuple(sorted(names)), "; ".join(reasons))
+
+    names.add(FETCH_ENTRY)  # the minimum: no claim about a named protein without an entry
+    services.append("uniprot")
+    reasons.append("resolve and verify the entry before summarising")
     if ACCESSION_RE.search(question):
         names.add(FETCH_ENTRY)
         reasons.append("explicit accession supplied")
+    elif is_sequence_query:
+        names.update({COMPUTE_PROPERTIES, CHROMOPHORE})
+        reasons.append(
+            "sequence pasted: answer from computed properties; UniProt text search "
+            "cannot identify a protein from its sequence, so it is not advertised"
+        )
     elif not PDB_ID_RE.search(question):
         names.add(SEARCH_UNIPROT)
         reasons.append("name/organism given, so identity must be resolved first")

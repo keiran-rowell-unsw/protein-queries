@@ -25,6 +25,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "typer>=0.12",
     "rich>=13.7",
+    "biopython>=1.84",
 ]
 
 [project.optional-dependencies]

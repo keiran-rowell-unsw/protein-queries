@@ -12,6 +12,8 @@ from typing import Any
 SEARCH_UNIPROT = "search_uniprotkb"
 FETCH_ENTRY = "fetch_uniprot_entry"
 FETCH_FASTA = "fetch_fasta"
+COMPUTE_PROPERTIES = "compute_sequence_properties"
+CHROMOPHORE = "find_chromophore_candidates"
 PDBE_API = "pdbe_api"  # placeholder: replace with names from the connected MCP server
 PDBE_SEARCH = "run_pdbe_search_query"
 PDBE_SCHEMA = "get_pdbe_search_schema"
@@ -43,13 +45,19 @@ def _fn(
 UNIPROT_TOOLS: list[dict[str, Any]] = [
     _fn(
         SEARCH_UNIPROT,
-        "Search UniProtKB and return candidate entries. REQUIRED before choosing an "
-        "accession from a gene or protein name. Never answer from remembered accessions.",
+        "Search UniProtKB by name, gene, organism, or accession and return candidates. "
+        "REQUIRED before choosing an accession from a gene or protein name. Never answer "
+        "from remembered accessions. Cannot identify a protein from its sequence.",
         {
             "query": {
                 **_STRING,
-                "description": "UniProtKB query, e.g. "
-                "'gene:TP53 AND organism_id:9606 AND reviewed:true'",
+                "description": (
+                    "UniProtKB query, e.g. 'gene:TP53 AND organism_id:9606 AND "
+                    "reviewed:true'. Use a name, gene, accession, or organism. Do NOT "
+                    "paste an amino-acid sequence here: full-text search does not match "
+                    "sequences and will return nothing. Sequence-based identification "
+                    "needs a similarity search, which this tool is not."
+                ),
             },
             "fields": {
                 "type": "array",
@@ -78,6 +86,36 @@ UNIPROT_TOOLS: list[dict[str, Any]] = [
     ),
 ]
 
+SEQUENCE_TOOLS: list[dict[str, Any]] = [
+    _fn(
+        COMPUTE_PROPERTIES,
+        "Compute biophysicochemical properties from an amino-acid sequence that the user "
+        "pasted or uploaded (FASTA). REQUIRED before reporting composition, MW, pI, charge, "
+        "extinction coefficient, GRAVY, aromaticity, instability index, or a hydropathy "
+        "profile. These values must never be estimated from the sequence by eye or recalled.",
+        {
+            "sequence": {
+                **_STRING,
+                "description": "Amino-acid sequence (FASTA header line is tolerated; gaps "
+                "and non-standard residues are reported as warnings, not silently removed)",
+            },
+            "label": {**_STRING, "description": "Optional name for the record"},
+            "hydropathy_window": {"type": "integer", "minimum": 3, "maximum": 41},
+        },
+        ["sequence"],
+    ),
+    _fn(
+        CHROMOPHORE,
+        "Nominate candidate chromophore-forming tripeptide cores in a sequence. Returns "
+        "CANDIDATES ONLY — it does not establish photon absorption or that the protein is "
+        "photo-active. Always pair with fetch_uniprot_entry to read the annotated "
+        "Modified residue features and absorption maxima before saying anything about a "
+        "chromophore.",
+        {"sequence": _STRING},
+        ["sequence"],
+    ),
+]
+
 # PDBe tools come from the connected MCP server's own schemas. Do not hard-code guessed
 # names: load them with pdbe_mcp.load_pdbe_tools() and fall back to these placeholders.
 PDBE_TOOL_NOTE = (
@@ -90,8 +128,11 @@ def all_tools(
     *,
     include_pdbe: bool = True,
     pdbe_tools: list[dict[str, Any]] | None = None,
+    include_sequence: bool = True,
 ) -> list[dict[str, Any]]:
     tools = list(UNIPROT_TOOLS)
+    if include_sequence:
+        tools.extend(SEQUENCE_TOOLS)
     if include_pdbe:
         tools.extend(pdbe_tools or [])
     return tools
@@ -105,6 +146,7 @@ __all__ = [
     "PDBE_SEARCH",
     "PDBE_TOOL_NOTE",
     "SEARCH_UNIPROT",
+    "SEQUENCE_TOOLS",
     "UNIPROT_TOOLS",
     "all_tools",
 ]

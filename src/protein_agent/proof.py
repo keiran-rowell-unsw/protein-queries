@@ -45,6 +45,18 @@ class Evidence:
     def used_tool(self, name: str) -> bool:
         return any(str(c.get("name")).endswith(name) for c in self.calls)
 
+    def subjects(self) -> list[str]:
+        """Identifiers the tools were actually asked about, in call order."""
+        out: list[str] = []
+        for call in self.calls:
+            args = call.get("arguments") or {}
+            for key in ("accession", "pdb_id", "query", "sequence", "label"):
+                value = args.get(key)
+                if isinstance(value, str) and value.strip():
+                    out.append(value.strip())
+                    break
+        return out
+
     def corpus(self) -> str:
         return "\n".join(self.raw_results)
 
@@ -64,7 +76,40 @@ def extract_claims(text: str) -> dict[str, set[str]]:
     }
 
 
-def unsupported_claims(answer: str, evidence: Evidence, *, min_calls: int = 1) -> list[str]:
+def subject_mismatch(
+    question: str, evidence: Evidence, *, ignore_accessions: frozenset[str] = frozenset()
+) -> list[str]:
+    """Detect the specific failure where the model retrieves *something* to satisfy the
+    tool requirement but changes the subject.
+
+    A sequence-pasted question is about the sequence the user supplied. If the run then
+    fetched an accession that the user never named and the assistant never verified,
+    that is a substitution: the answer describes a different protein than was asked about.
+    """
+    problems: list[str] = []
+    asked = question.strip().upper()
+    supplied_sequence = bool(re.search(r"[ACDEFGHIKLMNPQRSTVWY]{20,}", asked.replace(" ", "")))
+    if not supplied_sequence:
+        return problems
+    named = set(UNIPROT_ACCESSION.findall(question))
+    for subject in evidence.subjects():
+        for candidate in UNIPROT_ACCESSION.findall(subject):
+            if candidate in named or candidate in ignore_accessions:
+                continue
+            problems.append(
+                f"{candidate} was fetched, but the user asked about a pasted sequence and "
+                f"never named {candidate}; results describe a different protein"
+            )
+    return problems
+
+
+def unsupported_claims(
+    answer: str,
+    evidence: Evidence,
+    *,
+    min_calls: int = 1,
+    question_subject_check: list[str] | None = None,
+) -> list[str]:
     """Return human-readable reasons the answer is not backed by tool output."""
     problems: list[str] = []
     if evidence.call_count < min_calls:
@@ -76,6 +121,7 @@ def unsupported_claims(answer: str, evidence: Evidence, *, min_calls: int = 1) -
         problems.append("the model returned no content")
         return problems
 
+    problems.extend(question_subject_check or [])
     corpus = evidence.corpus().upper()
     claims = extract_claims(answer)
     for kind, tokens in claims.items():
@@ -103,11 +149,16 @@ def prove_answer(
     answer: str,
     evidence: Evidence,
     *,
+    question: str = "",
     min_calls: int = 1,
     on_unproven: str = "block",
+    trusted_accessions: frozenset[str] = frozenset(),
 ) -> str:
     """Return the answer if it is grounded; otherwise raise or replace it."""
-    problems = unsupported_claims(answer, evidence, min_calls=min_calls)
+    mismatch = subject_mismatch(question, evidence, ignore_accessions=trusted_accessions)
+    problems = unsupported_claims(
+        answer, evidence, min_calls=min_calls, question_subject_check=mismatch
+    )
     if not problems:
         return answer
     if on_unproven == "warn":

@@ -14,8 +14,15 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .tools import FETCH_ENTRY, FETCH_FASTA, SEARCH_UNIPROT
+from .tools import (
+    CHROMOPHORE,
+    COMPUTE_PROPERTIES,
+    FETCH_ENTRY,
+    FETCH_FASTA,
+    SEARCH_UNIPROT,
+)
 
+PROTEIN_MIN_RUN = 8
 ACCESSION_RE = re.compile(r"^[A-Z0-9]{6,10}$|^[A-Z0-9]{5,10}-\d{2}$")
 DEFAULT_FIELDS = [
     "accession",
@@ -28,6 +35,78 @@ DEFAULT_FIELDS = [
     "reviewed",
     "entry_type",
 ]
+
+
+PTM_FEATURES = ("Modified residue", "Glycosylation", "Signal", "Disulfide bond", "Cross-link")
+
+
+def extract_photochemistry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Pull absorption and PTM/Processing facts out of a fetched UniProt entry.
+
+    Returns only what the entry states. An absent block is reported as *not annotated*
+    for this entry — never as *no absorption* or *not photo-active*.
+    """
+    out: dict[str, Any] = {"absorption": None, "ptm_processing": [], "signal_peptide": None}
+    for comment in entry.get("comments", []) or []:
+        if comment.get("commentType") == "BIOPHYSICOCHEMICAL PROPERTIES":
+            absb = comment.get("absorption")
+            if absb:
+                out["absorption"] = {
+                    "max_nm": absb.get("max"),
+                    "approximate": absb.get("approximate"),
+                    "note": _texts(absb.get("note")),
+                    "evidence": _evidence(absb),
+                }
+            for key, label in (
+                ("thermodynamicStability", "thermodynamic_stability"),
+                ("kineticStability", "kinetic_stability"),
+            ):
+                if comment.get(key):
+                    out[label] = comment[key]
+        if comment.get("commentType") == "PTM" and comment.get("similarity") is None:
+            out.setdefault("ptm_comments", []).append(
+                {"texts": _texts(comment), "evidence": _evidence(comment)}
+            )
+    for feature in entry.get("features", []) or []:
+        ftype = feature.get("type")
+        if ftype in PTM_FEATURES or ftype == "Signal":
+            location = feature.get("location", {}) or {}
+            out["ptm_processing"].append(
+                {
+                    "type": ftype,
+                    "start": (location.get("start") or {}).get("value"),
+                    "end": (location.get("end") or {}).get("value"),
+                    "description": feature.get("description"),
+                    "evidence": _evidence(feature),
+                }
+            )
+            if ftype == "Signal":
+                out["signal_peptide"] = out["ptm_processing"][-1]
+    if out["absorption"] is None:
+        out["absorption_note"] = (
+            "no absorption data annotated in this entry; this is not evidence that the "
+            "protein fails to absorb photons"
+        )
+    return out
+
+
+def _texts(node: Any) -> list[str]:
+    if not isinstance(node, dict):
+        return []
+    collected: list[str] = []
+    for entry in node.get("texts", []) or []:
+        if isinstance(entry, dict) and entry.get("value"):
+            collected.append(entry["value"])
+    return collected
+
+
+def _evidence(node: Any) -> list[dict[str, Any]]:
+    items = node.get("evidences", []) if isinstance(node, dict) else []
+    return [
+        {"code": e.get("evidenceCode"), "source": e.get("source"), "id": e.get("id")}
+        for e in items or []
+        if isinstance(e, dict)
+    ]
 
 
 class RetrievalError(RuntimeError):
@@ -49,6 +128,29 @@ def _provenance(source: str, endpoint: str, subject: str, **extra: Any) -> dict[
     return record
 
 
+PROTEIN_LIKE_RE = re.compile(
+    "^[ACDEFGHIKLMNPQRSTVWY]{" + str(PROTEIN_MIN_RUN) + ",}$"
+)
+
+
+def looks_like_amino_acid_sequence(query: str) -> bool:
+    """True when a search string is a raw peptide, which UniProtKB search cannot match.
+
+    Established empirically on this node: searching the exact sequence of P42212 returns
+    0 results (total null), quoted or not. Guarding here stops the agent from burning its
+    tool budget re-issuing a query that is structurally incapable of succeeding.
+    """
+    candidate = query.strip().strip('"').upper().replace(" ", "")
+    # Any run of >=8 unbroken residues is treated as sequence input, so a model that
+    # shortens or fragments the query to dodge the guard still cannot reach the endpoint.
+    if not PROTEIN_LIKE_RE.search(candidate):
+        return False
+    if not set(candidate) <= set("ACDEFGHIKLMNPQRSTVWY"):
+        return False
+    # a real query carries operators or organism hints; a pasted sequence does not
+    return not any(tok in candidate for tok in ("AND", "OR", ":", "GENE:", "ORGANISM"))
+
+
 class UniProtClient:
     def __init__(self, settings: Settings, *, client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -66,6 +168,25 @@ class UniProtClient:
     def search(
         self, query: str, *, fields: list[str] | None = None, size: int = 10
     ) -> dict[str, Any]:
+        if looks_like_amino_acid_sequence(query):
+            return {
+                "results": [],
+                "query_rejected": "amino_acid_sequence",
+                "_provenance": _provenance(
+                    "uniprot", "GET /uniprotkb/search", query, status="not_supported"
+                ),
+                "explanation": (
+                    "UniProtKB text search does not match raw sequences; this query "
+                    "cannot return a hit and was not sent. Identifying a protein from its "
+                    "sequence requires a similarity search (BLAST), which is unavailable "
+                    "on this node."
+                ),
+                "do_not": (
+                    "Do not retry with this sequence, a fragment of it, reordered fields, "
+                    "or a different size — none of those can succeed. Report identity as "
+                    "unresolved and answer from the computed properties on record."
+                ),
+            }
         params = {
             "query": query,  # httpx URL-encodes; never concatenate raw user text
             "format": "json",
@@ -129,6 +250,7 @@ class UniProtClient:
                 if x.get("database") in {"PDB", "GO", "PubMed", "Ensembl", "RefSeq"}
             ],
             "entryVersion": entry.get("entryVersion"),
+            "photochemistry": extract_photochemistry(entry),
             "_provenance": _provenance("uniprot", f"GET /uniprotkb/{acc}.json", acc),
         }
 
@@ -188,6 +310,26 @@ def dispatch(
             return uniprot.entry(arguments["accession"])
         if name == FETCH_FASTA:
             return uniprot.fasta(arguments["accession"])
+        if name in {COMPUTE_PROPERTIES, CHROMOPHORE}:
+            from . import properties as local
+
+            sequence = arguments["sequence"]
+            if name == CHROMOPHORE:
+                return {
+                    **local.chromophore_candidates(sequence),
+                    "_provenance": _provenance(
+                        "local-compute", "chromophore_candidates", "sequence"
+                    ),
+                }
+            cleaned, warnings = local.clean_fasta_sequence(sequence)
+            result = local.compute_properties(
+                cleaned,
+                header=arguments.get("label") or "(user-supplied sequence)",
+            ).as_dict()
+            result["warnings"] = warnings + result.get("warnings", [])
+            result["input_length"] = len(cleaned)
+            result["_provenance"] = _provenance("local-compute", "compute_properties", "sequence")
+            return result
         if pdbe is not None and name.startswith("pdbe"):
             return pdbe.entry(arguments.get("pdb_id", ""))
     except (RetrievalError, httpx.HTTPError, KeyError, json.JSONDecodeError) as exc:

@@ -92,8 +92,10 @@ class ResTechGateway:
         }
         if tools:
             payload["tools"] = tools
-            # tool_choice="required" makes a memory-only answer structurally impossible.
-            payload["tool_choice"] = tool_choice or ("auto" if tools else "none")
+            # "required" makes a memory-only answer structurally impossible, but it also
+            # forces a tool call on the turn that should be the summary. Use it for the
+            # retrieval rounds only, then "auto" for the final round (see agent.py).
+            payload["tool_choice"] = tool_choice or "auto"
         if max_tokens:
             payload["max_tokens"] = max_tokens
 

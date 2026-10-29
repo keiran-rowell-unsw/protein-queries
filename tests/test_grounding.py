@@ -105,9 +105,11 @@ def test_happy_path_requires_and_uses_a_tool_call(agent_with_mock) -> None:
     assert result.evidence.call_count >= 1
     assert result.evidence.tool_names() == ["fetch_uniprot_entry"]
     assert "P04637" in result.answer
-    for payload in captured:  # every request in the loop enforced the rule
-        assert payload["tool_choice"] == "required"
-        assert payload["tools"]
+    # First request must forbid a memory-only reply; the follow-up that writes the
+    # answer runs with tools offered but not forced, or it could never conclude.
+    assert captured[0]["tool_choice"] == "required"
+    assert captured[0]["tools"]
+    assert all(p["tool_choice"] in {"required", "auto"} for p in captured)
 
 
 def test_memory_only_answer_is_blocked(agent_with_mock) -> None:
