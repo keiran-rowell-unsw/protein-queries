@@ -52,7 +52,12 @@ cd protein-queries && git pull
 ```
 
 **Site prerequisites before launch:** the OOD host's per-user PUN must support Python
-Passenger and be able to reach `katana3` with `ssh -o BatchMode=yes -o
+Passenger. The included executable `bin/python` wrapper selects the user's shared
+uv-managed Python 3.12.9 or a system Python >=3.8 (override with
+`PROTEIN_OOD_PYTHON` in the PUN environment). This bypasses OOD's platform wrapper,
+which calls a missing `python` on some hosts. After pulling updates, restart the PUN
+from the OOD dashboard if Passenger still runs an older version. The OOD host must be
+able to reach `katana3` with `ssh -o BatchMode=yes -o
 StrictHostKeyChecking=yes katana3 true` as that user. The home directory must be shared
 between the OOD host and katana3, and the project `.venv` and its dependencies must be
 installed on katana3. To change the SSH hostname or project path, set

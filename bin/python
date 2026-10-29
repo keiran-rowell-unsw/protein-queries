@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Passenger uses bin/python when launching this app. Its platform wrapper tries
+# `python`, which may not exist on the OOD host. Use a per-user Python >= 3.8.
+set -euo pipefail
+
+if [[ -n "${PROTEIN_OOD_PYTHON:-}" ]]; then
+  exec "$PROTEIN_OOD_PYTHON" "$@"
+fi
+
+# The user's home directory is shared with katana3, where uv installed this
+# Python. If unavailable on the OOD host, use a site-installed recent Python.
+for candidate in \
+  "$HOME/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/bin/python3.12" \
+  python3.12 python3.11 python3.10 python3.9 python3.8; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    exec "$candidate" "$@"
+  fi
+done
+
+echo "Protein report requires Python >= 3.8 on the OOD host; set PROTEIN_OOD_PYTHON." >&2
+exit 1
