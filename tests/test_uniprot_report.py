@@ -15,6 +15,8 @@ ENTRY = {
     "entryType": "UniProtKB reviewed (Swiss-Prot)",
     "organism": {"scientificName": "Example organism"},
     "entryVersion": 12,
+    "proteinDescription": {"recommendedName": {"fullName": {"value": "Example protein"}}},
+    "genes": [{"geneName": {"value": "EXAMPLE1"}}],
     "sequence": {"value": SEQUENCE, "length": len(SEQUENCE)},
     "features": [
         {"type": "Signal", "location": {"start": {"value": 1}, "end": {"value": 5}},
@@ -52,6 +54,8 @@ def test_exact_match_displays_entry_annotations_and_escapes_text():
     assert "&lt;img" in page and "<img src=x" not in page
     assert "https://www.uniprot.org/uniprotkb/Q12345/entry" in page
     assert "ECO:0000256" in page
+    assert "Example protein" in page and "EXAMPLE1" in page
+    assert record["protein_description"] == ENTRY["proteinDescription"]
 
 
 @respx.mock

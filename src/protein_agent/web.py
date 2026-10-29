@@ -24,7 +24,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>body{{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}}
 textarea{{width:100%;box-sizing:border-box}}button{{padding:.6rem 1rem}}</style></head><body>
 <h1>Protein sequence report</h1><p>Runs locally on this node. Paste one FASTA record or bare sequence
-(up to 10,000 standard amino acids); no database identity is inferred.</p>
+(up to 10,000 standard amino acids). Exact matches are verified through UniProt; a verified
+accession is then used to retrieve ranked experimental structure mappings from PDBe.</p>
 {message}<form method="post" action="/run"><label for="sequence">Protein sequence</label><br>
 <textarea id="sequence" name="sequence" rows="12" required maxlength="100000"></textarea><br>
 <label for="accession">UniProt accession (optional; exact sequence match required)</label><br>

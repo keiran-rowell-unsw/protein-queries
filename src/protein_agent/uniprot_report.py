@@ -105,6 +105,13 @@ def fetch_annotations(
             "entry_version": entry.get("entryVersion"),
             "retrieved_at": (entry.get("_provenance") or {}).get("retrieved_at"),
             "canonical_sequence_match": True,
+            "protein_description": entry.get("proteinDescription"),
+            "genes": entry.get("genes") or [],
+            "comments": entry.get("comments") or [],
+            "keywords": entry.get("keywords") or [],
+            "cross_references": entry.get("uniProtKBCrossReferences") or [],
+            "protein_interactions": entry.get("proteinInteractions") or [],
+            "entry_audit": entry.get("entryAudit") or {},
             "features": features,
             "absorption": absorption,
             "source_url": (

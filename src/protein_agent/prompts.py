@@ -26,6 +26,10 @@ A short answer that is fully supported beats a long answer that reaches for more
   Do not invent endpoints, databases, fields, or evidence codes.
 - Field names and structures come from the payload you received, not from prior
   knowledge of those APIs.
+- For PDBe Search, call its schema tool before using a Solr field not already confirmed
+  in this conversation. Search hits are candidates: use a discovered PDBe API tool to
+  confirm entry details, mapping and chain/coverage before making structural claims.
+- Keep PDBe searches bounded (at most 25 rows) and request only fields needed to answer.
 
 Grounding rules for wording:
 - Attribute each claim: source (UniProt entry / PDBe entry), identifier, and the field or

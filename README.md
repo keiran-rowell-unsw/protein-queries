@@ -28,9 +28,11 @@ Advanced values and method details remain in the downloadable JSON; the HTML pri
 results and caveats. With **no accession**, the app computes the sequence's UniProt CRC64
 checksum (Biopython), searches the UniParc exact-sequence index, verifies that the entire
 returned sequence matches, and checks up to four linked UniProtKB canonical entries.
-If exactly one matches, the verified accession and its annotations are shown. If matches
-are ambiguous, it lists candidates and asks the researcher to enter a specific accession;
-it never selects the first hit. An **optional UniProt accession** bypasses auto-search and
+If exactly one matches, the verified accession and its annotations are shown. The report
+then uses the dynamically discovered PDBe API MCP ranked-structure tool to show up to ten
+experimental PDB mappings with method, resolution when returned, chain and UniProt coverage.
+If matches are ambiguous, it lists candidates and asks the researcher to enter a specific
+accession; it never selects the first hit. An **optional UniProt accession** bypasses auto-search and
 fetches that UniProtKB entry directly. Signal peptides, glycosylation sites, modified
 residues, cross-links and annotated absorption are displayed **only if the submitted
 sequence exactly matches that entry's canonical sequence**. A missing hit, isoform or
@@ -39,10 +41,11 @@ Only a checksum goes into the search URL; the full sequence is verified against 
 returned record. This is an **exact** search, not a BLAST or similarity search: variants,
 tags, fragments and isoforms without a canonical match will not be identified.
 It does not run BLAST,
-AlphaFold confidence analysis, structure prediction, PDBe retrieval, Protein-sol,
+AlphaFold confidence analysis, structure prediction, Protein-sol,
 SoDoPE, SignalP/Razor, AI summaries, ChimeraX surface MLP or queued programs.
 Metapredict predicts disorder, **not solubility**. Identity is unresolved without a
-matching accession, and experimental structure is never implied. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
+matching accession; experimental structures are reported only from PDBe mappings to a
+sequence-verified accession. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
 than 10,000 residues are rejected rather than silently changed.
 
 For a local test only:
@@ -149,6 +152,9 @@ uv run ruff check .
 Verified against the live gateway: `tool_choice: "required"` forces a correct
 `fetch_uniprot_entry(accession="P04637")` call on all three chat models, and the loop then
 accepts only tool-backed text (an invented accession is blocked). UniProt retrieval is
-implemented; PDBe MCP is stubbed with `NotImplementedError` because `pdbe-mcp-server` is not
-installed on this node (`uvx` is available). Remaining work: wire the PDBe MCP client, add
-streaming and structured output to the CLI, then put both behind a chat UI.
+implemented. Structural questions now lazily start the pinned official PDBe API and Search
+MCP stdio servers, discover their live tool names and schemas, and route calls
+without hard-coded generated API-tool names. Search fan-out is capped at 25 rows and every
+result records its MCP server, tool, arguments, and retrieval time. The OOD report also
+shows a bounded ranked PDBe mapping after exact UniProt sequence verification. Remaining
+work includes streaming and structured output in the CLI.

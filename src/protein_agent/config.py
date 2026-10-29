@@ -32,6 +32,9 @@ class Settings:
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     uniprot_base_url: str = DEFAULT_UNIPROT_BASE_URL
+    pdbe_mcp_command: str = "pdbe-mcp-server"
+    pdbe_mcp_timeout: float = 45.0
+    pdbe_mcp_max_result_bytes: int = 262_144
     max_tool_rounds: int = 6
     request_timeout: float = 120.0
     temperature: float = 0.0
@@ -54,6 +57,11 @@ class Settings:
             uniprot_base_url=os.getenv(
                 "UNIPROT_BASE_URL", DEFAULT_UNIPROT_BASE_URL
             ).rstrip("/"),
+            pdbe_mcp_command=os.getenv("PDBE_MCP_COMMAND", "pdbe-mcp-server"),
+            pdbe_mcp_timeout=float(os.getenv("PDBE_MCP_TIMEOUT", "45")),
+            pdbe_mcp_max_result_bytes=int(
+                os.getenv("PDBE_MCP_MAX_RESULT_BYTES", "262144")
+            ),
             max_tool_rounds=int(os.getenv("MAX_TOOL_ROUNDS", "6")),
             request_timeout=float(os.getenv("RESTECH_TIMEOUT", "120")),
             temperature=float(os.getenv("RESTECH_TEMPERATURE", "0")),
@@ -67,6 +75,10 @@ class Settings:
             )
         if settings.max_tool_rounds < 1:
             raise ConfigError("MAX_TOOL_ROUNDS must be >= 1")
+        if settings.pdbe_mcp_timeout <= 0:
+            raise ConfigError("PDBE_MCP_TIMEOUT must be > 0")
+        if settings.pdbe_mcp_max_result_bytes < 1024:
+            raise ConfigError("PDBE_MCP_MAX_RESULT_BYTES must be >= 1024")
         return settings
 
     def redact(self, text: str) -> str:

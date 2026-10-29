@@ -14,7 +14,7 @@ from .config import Settings
 from .gateway import ChatResponse, ResTechGateway
 from .prompts import build_system_prompt
 from .proof import AnswerProofError, Evidence, prove_answer
-from .retrieval import PdbeClient, UniProtClient, dispatch
+from .retrieval import PdbeClient, RetrievalError, UniProtClient, dispatch
 from .tools import all_tools
 
 
@@ -44,8 +44,8 @@ class ProteinAgent:
         self.settings = settings
         self.gateway = gateway or ResTechGateway(settings)
         self.uniprot = uniprot or UniProtClient(settings)
-        # PDBe is opt-in: the MCP server is not installed on every node, and a stub that
-        # raises would teach the model to distrust working tools.
+        # PDBe starts lazily only for structural questions; discovery launches the official
+        # API and Search MCP stdio servers and would be wasteful for UniProt-only requests.
         self.pdbe = pdbe
         self._pdbe_tools = pdbe_tools
         self.tools = all_tools(pdbe_tools=pdbe_tools)
@@ -175,13 +175,28 @@ class ProteinAgent:
 
 
     def _tools_for(self, question: str) -> list[dict[str, Any]]:
+        from .pdbe_mcp import PdbeMcpError
         from .router import build_plan
+
+        preliminary = build_plan(question, pdbe_tools=self._pdbe_tools)
+        if "pdbe" in preliminary.services and self._pdbe_tools is None:
+            try:
+                self.pdbe = self.pdbe or PdbeClient(self.settings)
+                self._pdbe_tools = self.pdbe.tool_schemas()
+            except PdbeMcpError as exc:
+                raise RetrievalError(
+                    "PDBe MCP discovery failed; structural facts remain unverified: " + str(exc)
+                ) from exc
 
         plan = build_plan(question, pdbe_tools=self._pdbe_tools)
         allowed = set(plan.tool_names) | set(pdbe_tool_names_for(plan))
         candidates = all_tools(pdbe_tools=self._pdbe_tools)
         tools = [t for t in candidates if t["function"]["name"] in allowed]
-        return tools or candidates
+        if not tools:
+            raise RetrievalError(
+                "The retrieval plan produced no executable tools; refusing to guess"
+            )
+        return tools
 
 
 def pdbe_tool_names_for(plan) -> list[str]:

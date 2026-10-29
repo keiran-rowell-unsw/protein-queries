@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .pdbe_mcp import PdbeMcpError
 from .tools import (
     CHROMOPHORE,
     COMPUTE_PROPERTIES,
@@ -236,29 +237,65 @@ class UniProtClient:
         response.raise_for_status()
         entry = response.json()
         sequence = entry.get("sequence", {}) or {}
+        organism = entry.get("organism", {}) or {}
         return {
-            # Trimmed to what answers need; keeps prompts and latency bounded (uniprot/AGENTS.md).
+            # A curated, bounded full-entry view: enough for identity, function, sequence,
+            # features, evidence and common links without feeding the model the raw record.
             "primaryAccession": entry.get("primaryAccession", acc),
+            "secondaryAccessions": entry.get("secondaryAccessions", []),
+            "uniProtkbId": entry.get("uniProtkbId"),
             "entryType": entry.get("entryType"),
-            "organism": entry.get("organism", {}).get("scientificName"),
+            "annotationScore": entry.get("annotationScore"),
+            "proteinExistence": entry.get("proteinExistence"),
+            "organism": organism.get("scientificName"),
+            "organismDetails": {
+                "scientificName": organism.get("scientificName"),
+                "commonName": organism.get("commonName"),
+                "taxonId": organism.get("taxonId"),
+                "lineage": organism.get("lineage", []),
+            },
             "proteinDescription": entry.get("proteinDescription"),
             "genes": entry.get("genes", []),
             "sequence": {
                 "value": sequence.get("value", ""),
                 "length": sequence.get("length", len(sequence.get("value", ""))),
+                "molWeight": sequence.get("molWeight"),
+                "crc64": sequence.get("crc64"),
+                "md5": sequence.get("md5"),
             },
             "comments": entry.get("comments", []),
+            "keywords": entry.get("keywords", []),
             "proteinInteractions": entry.get("proteinInteractions"),
             "ftFeatures": entry.get("features", []),
+            "references": [
+                {
+                    "citation": ref.get("citation"),
+                    "referencePositions": ref.get("referencePositions", []),
+                    "referenceComments": ref.get("referenceComments", []),
+                }
+                for ref in entry.get("references") or []
+            ],
             "uniProtKBCrossReferences": [
                 {
                     "database": x.get("database"),
                     "id": x.get("id"),
                     "properties": x.get("properties", []),
                 }
-                for x in entry.get("uniProtKBCrossReferences", [])
-                if x.get("database") in {"PDB", "GO", "PubMed", "Ensembl", "RefSeq"}
+                for x in entry.get("uniProtKBCrossReferences") or []
+                if x.get("database") in {
+                    "PDB", "GO", "Ensembl", "RefSeq", "AlphaFoldDB", "InterPro",
+                    "Pfam", "Reactome", "ChEBI",
+                }
             ],
+            "entryAudit": {
+                "firstPublicDate": (entry.get("entryAudit") or {}).get("firstPublicDate"),
+                "lastAnnotationUpdateDate": (entry.get("entryAudit") or {}).get(
+                    "lastAnnotationUpdateDate"
+                ),
+                "lastSequenceUpdateDate": (entry.get("entryAudit") or {}).get(
+                    "lastSequenceUpdateDate"
+                ),
+            },
             "entryVersion": entry.get("entryVersion"),
             "photochemistry": extract_photochemistry(entry),
             "_provenance": _provenance("uniprot", f"GET /uniprotkb/{acc}.json", acc),
@@ -281,24 +318,26 @@ class UniProtClient:
 
 
 class PdbeClient:
-    """MCP-backed structural retrieval. Not implemented and not installed on this node.
+    """MCP-backed PDBe retrieval with live API/Search tool discovery."""
 
-    Connect with the stdio config in `pdbe-kb/AGENTS.md` (`uvx pdbe-mcp-server --server-type
-    pdbe_api_server` and `pdbe_search_server`), discover tool names from the server, and
-    implement the same `_provenance` discipline as `UniProtClient`.
-    """
+    def __init__(self, settings: Settings, *, mcp: Any | None = None) -> None:
+        from .pdbe_mcp import PdbeMcpClient
 
-    def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._mcp = mcp or PdbeMcpClient(settings)
 
-    def search_structures(self, uniprot_accession: str, *, rows: int = 10) -> dict[str, Any]:
-        raise NotImplementedError(
-            "PDBe MCP is not configured here. See pdbe-kb/AGENTS.md for the server "
-            "registration and schema-discovery rules before implementing."
-        )
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """Return OpenAI-compatible schemas generated from live MCP discovery."""
+        return self._mcp.openai_tools()
 
-    def entry(self, pdb_id: str) -> dict[str, Any]:
-        raise NotImplementedError("See pdbe-kb/AGENTS.md: fetch via the PDBe API MCP server.")
+    def supports(self, name: str) -> bool:
+        return self._mcp.supports(name)
+
+    def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._mcp.call(name, arguments)
+
+    def close(self) -> None:
+        self._mcp.close()
 
 
 def dispatch(
@@ -353,9 +392,9 @@ def dispatch(
             result["input_length"] = len(cleaned)
             result["_provenance"] = _provenance("local-compute", "compute_properties", "sequence")
             return result
-        if pdbe is not None and name.startswith("pdbe"):
-            return pdbe.entry(arguments.get("pdb_id", ""))
-    except (RetrievalError, httpx.HTTPError, KeyError, json.JSONDecodeError) as exc:
+        if pdbe is not None and pdbe.supports(name):
+            return pdbe.call(name, arguments)
+    except (RetrievalError, PdbeMcpError, httpx.HTTPError, KeyError, json.JSONDecodeError) as exc:
         return {
             "error": str(exc),
             "_provenance": _provenance("tool-failure", name, json.dumps(arguments, sort_keys=True)),

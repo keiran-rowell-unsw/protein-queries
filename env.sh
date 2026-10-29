@@ -76,7 +76,7 @@ model         : $RESTECH_MODEL
 tool calls    : required, min $MIN_TOOL_CALLS per answer (REQUIRE_TOOL_CALLS=$REQUIRE_TOOL_CALLS)
 api key       : $([[ -n "${RESTECH_API_KEY:-}" ]] && echo "set (not shown)" || echo MISSING)
 uniProt       : ${UNIPROT_BASE_URL:-https://rest.uniprot.org}
-pdbe MCP      : not configured on this node (structural claims stay unverified)
+pdbe MCP      : dynamic stdio via ${PDBE_MCP_COMMAND:-pdbe-mcp-server} (started for structural questions)
 optional deps : enabled (torch/metapredict; not optional, see sync block above)
 EOF
       exit 0

@@ -15,9 +15,6 @@ FETCH_FASTA = "fetch_fasta"
 COMPUTE_PROPERTIES = "compute_sequence_properties"
 CHROMOPHORE = "find_chromophore_candidates"
 PLOT_HYDROPATHY = "plot_hydropathy"
-PDBE_API = "pdbe_api"  # placeholder: replace with names from the connected MCP server
-PDBE_SEARCH = "run_pdbe_search_query"
-PDBE_SCHEMA = "get_pdbe_search_schema"
 
 _STRING = {"type": "string"}
 
@@ -131,12 +128,7 @@ SEQUENCE_TOOLS: list[dict[str, Any]] = [
     ),
 ]
 
-# PDBe tools come from the connected MCP server's own schemas. Do not hard-code guessed
-# names: load them with pdbe_mcp.load_pdbe_tools() and fall back to these placeholders.
-PDBE_TOOL_NOTE = (
-    "Register the PDBe API and Search server tools discovered from the MCP connection; "
-    "see pdbe-kb/AGENTS.md."
-)
+# PDBe tools come exclusively from the connected MCP servers' live schemas.
 
 
 def all_tools(
@@ -156,10 +148,6 @@ def all_tools(
 __all__ = [
     "FETCH_ENTRY",
     "FETCH_FASTA",
-    "PDBE_API",
-    "PDBE_SCHEMA",
-    "PDBE_SEARCH",
-    "PDBE_TOOL_NOTE",
     "PLOT_HYDROPATHY",
     "SEARCH_UNIPROT",
     "SEQUENCE_TOOLS",

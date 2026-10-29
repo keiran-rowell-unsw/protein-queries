@@ -187,7 +187,8 @@ including when it is a protein I picked myself.
 | `gateway.py` | ResTech chat requests; `tool_choice` passthrough; 429/5xx bounded backoff; key redaction |
 | `prompts.py` | The system prompt that states the mandate to the model |
 | `tools.py` | Tool schemas the model may call (`search_uniprotkb`, `fetch_uniprot_entry`, `fetch_fasta`) |
-| `retrieval.py` | UniProt REST client; `_provenance` on every result; PDBe MCP stub |
+| `retrieval.py` | UniProt REST client and dispatch; `_provenance` on every result |
+| `pdbe_mcp.py` | Dynamic PDBe API/Search MCP discovery and bounded stdio invocation |
 | `agent.py` | Bounded loop: model call -> execute tools -> append `role:"tool"` -> prove answer |
 | `proof.py` | Post-hoc check that claims map onto recorded tool output; blocks otherwise |
 | `router.py` | Which tools to advertise per question (selection only; model still calls them) |

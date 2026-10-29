@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .disorder import predict_disorder
+from .pdbe_report import fetch_pdbe_structures
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
 from .uniprot_report import fetch_annotations, find_sequence_annotations
@@ -52,6 +53,29 @@ def parse_sequence(text: str) -> tuple[str, str]:
 
 def _row(name: str, value: object) -> str:
     return f"<tr><th scope='row'>{html.escape(name)}</th><td>{html.escape(str(value))}</td></tr>"
+
+
+def _named_value(node: object) -> str | None:
+    if isinstance(node, dict):
+        value = node.get("value")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _protein_name(description: object) -> str | None:
+    if not isinstance(description, dict):
+        return None
+    recommended = description.get("recommendedName") or {}
+    name = _named_value(recommended.get("fullName"))
+    if name:
+        return name
+    for key in ("submissionNames", "alternativeNames"):
+        for item in description.get(key) or []:
+            name = _named_value((item or {}).get("fullName"))
+            if name:
+                return name
+    return None
 
 
 def _uniprot_section(record: dict) -> str:
@@ -112,11 +136,73 @@ def _uniprot_section(record: dict) -> str:
         f"· {record['entry_type'] or 'review status not provided'}"
     )
     date = html.escape(record["retrieved_at"] or "retrieval date not available")
+    protein_name = _protein_name(record.get("protein_description"))
+    gene_names = [
+        _named_value((gene or {}).get("geneName")) for gene in record.get("genes") or []
+    ]
+    gene_names = [name for name in gene_names if name]
+    identity_details = ""
+    if protein_name:
+        identity_details += "<p><strong>Protein:</strong> " + html.escape(protein_name) + "</p>"
+    if gene_names:
+        identity_details += (
+            "<p><strong>Gene name(s):</strong> "
+            + html.escape(", ".join(gene_names))
+            + "</p>"
+        )
+    comment_types = sorted({
+        str(item.get("commentType")) for item in record.get("comments") or []
+        if isinstance(item, dict) and item.get("commentType")
+    })
+    if comment_types:
+        identity_details += (
+            "<p><strong>Annotation sections retrieved:</strong> "
+            + html.escape(", ".join(comment_types))
+            + ". Full fetched fields are included in report.json.</p>"
+        )
     return (
         "<h2>UniProt annotations</h2>"
         f"<p>Canonical sequence matched exactly: <a href=\"{url}\">{identity}</a> "
         f"(retrieved {date}). Positions refer to that canonical sequence.</p>"
+        + identity_details
         + annotations
+    )
+
+
+def _pdbe_section(record: dict) -> str:
+    """Render only structures mapped by PDBe to the sequence-verified accession."""
+    if record["status"] != "verified":
+        return (
+            "<h2>Experimental structures (PDBe)</h2><p>Not included: "
+            + html.escape(record.get("reason") or "UniProt identity was not verified.")
+            + "</p>"
+        )
+    rows = []
+    for item in record["structures"]:
+        pdb_id = html.escape(item["pdb_id"])
+        url = html.escape(item["source_url"], quote=True)
+        method = item.get("experimental_method") or "method not returned"
+        resolution = item.get("resolution_angstrom")
+        detail = html.escape(str(method))
+        if resolution is not None:
+            detail += f" · {html.escape(str(resolution))} Å"
+        chain = item.get("chain_id")
+        if chain:
+            detail += " · chain " + html.escape(str(chain))
+        start, end = item.get("uniprot_start"), item.get("uniprot_end")
+        if start is not None and end is not None:
+            detail += f" · UniProt residues {html.escape(str(start))}-{html.escape(str(end))}"
+        coverage = item.get("coverage_fraction")
+        if isinstance(coverage, (int, float)):
+            detail += f" · {coverage:.0%} coverage"
+        rows.append(
+            f"<tr><th scope='row'><a href=\"{url}\">{pdb_id}</a></th><td>{detail}</td></tr>"
+        )
+    return (
+        "<h2>Experimental structures (PDBe)</h2>"
+        "<p>Ranked PDBe mappings for the exact sequence-verified UniProt accession. "
+        "Coverage can represent a construct or domain rather than the full protein.</p>"
+        f"<table>{''.join(rows)}</table>"
     )
 
 
@@ -218,6 +304,7 @@ a{{color:#0057b8}}
 sequence-only flag does not establish actual expression or solubility.</p></details>
 {motif_section}
 {_uniprot_section(data['uniprot'])}
+{_pdbe_section(data['pdbe'])}
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>
@@ -242,6 +329,14 @@ def generate_report(input_path: Path, output_dir: Path, *, accession: str = "") 
     data["uniprot"] = (
         fetch_annotations(sequence, accession) if accession.strip()
         else find_sequence_annotations(sequence)
+    )
+    data["pdbe"] = (
+        fetch_pdbe_structures(data["uniprot"]["accession"])
+        if data["uniprot"]["status"] == "verified"
+        else {
+            "status": "not_requested",
+            "reason": "A sequence-verified UniProt accession is required before PDBe lookup.",
+        }
     )
     (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     report = output_dir / "report.html"

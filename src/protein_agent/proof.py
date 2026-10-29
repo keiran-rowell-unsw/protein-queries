@@ -11,6 +11,7 @@ Two mechanisms, both required:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,6 +42,11 @@ ANNOTATION_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 RESIDUE_POS = re.compile(r"\b(?:res(?:idue)?|aa)\s*#?\s*[0-9]+", re.IGNORECASE)
+STRUCTURE_DETAIL_LANGUAGE = re.compile(
+    r"\b(?:resolution|angstrom|Å|x-ray|crystallograph\w*|cryo-?em|nmr|"
+    r"experimental method|ligand|assembly|chain|structural coverage|pdb coverage)\b",
+    re.IGNORECASE,
+)
 
 # Identifiers that look factual but may legitimately appear without a tool call.
 GENE_NAMES = re.compile(r"\b[A-Z0-9]{2,10}\b")
@@ -61,6 +67,29 @@ class Evidence:
     def call_count(self) -> int:
         return len(self.calls)
 
+    @property
+    def success_count(self) -> int:
+        return len(self.successful_results())
+
+    def successful_results(self) -> list[str]:
+        """Only payloads that can support claims; failures and MCP errors are excluded."""
+        successful: list[str] = []
+        for raw in self.raw_results:
+            try:
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            provenance = payload.get("_provenance") or {}
+            if (
+                payload.get("error")
+                or payload.get("isError") is True
+                or provenance.get("source") == "tool-failure"
+                or provenance.get("status") in {"error", "failed"}
+            ):
+                continue
+            successful.append(raw)
+        return successful
+
     def tool_names(self) -> list[str]:
         return [str(c.get("name")) for c in self.calls]
 
@@ -80,7 +109,7 @@ class Evidence:
         return out
 
     def corpus(self) -> str:
-        return "\n".join(self.raw_results)
+        return "\n".join(self.successful_results())
 
     def add_call(self, name: str, arguments: dict[str, Any]) -> None:
         self.calls.append({"name": name, "arguments": arguments})
@@ -135,10 +164,10 @@ def unsupported_claims(
 ) -> list[str]:
     """Return human-readable reasons the answer is not backed by tool output."""
     problems: list[str] = []
-    if evidence.call_count < min_calls:
+    if evidence.success_count < min_calls:
         problems.append(
-            f"no tool call was made ({evidence.call_count} of >= {min_calls} required); "
-            "the answer would be model memory"
+            f"not enough successful tool results ({evidence.success_count} of >= {min_calls} "
+            f"required; {evidence.call_count} attempted); the answer would lack evidence"
         )
     if not answer.strip():
         problems.append("the model returned no content")
@@ -195,6 +224,26 @@ def unsupported_claims(
         ]
         if not rendered:
             problems.append("plot_hydropathy result is not on the evidence record")
+    if STRUCTURE_DETAIL_LANGUAGE.search(answer):
+        has_pdbe_api_result = False
+        for raw_result in evidence.raw_results:
+            try:
+                payload = json.loads(raw_result)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            provenance = payload.get("_provenance") or {}
+            if (
+                provenance.get("source") == "PDBe MCP"
+                and provenance.get("server") == "pdbe_api_server"
+                and payload.get("isError") is not True
+            ):
+                has_pdbe_api_result = True
+                break
+        if not has_pdbe_api_result:
+            problems.append(
+                "asserts structural details without a successful PDBe API MCP result; "
+                "a PDBe search hit alone is only a candidate"
+            )
     return problems
 
 
