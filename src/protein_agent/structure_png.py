@@ -114,7 +114,9 @@ def render_structure_png(
             "reason": (
                 "The PyMOL rendering engine is not installed on this node "
                 f"({type(exc).__name__}); pdb2png cannot rasterise coordinates. "
-                "Install the ``render`` extra to enable structure images."
+                "PyMOL is not declared as a dependency of this project and is not "
+                "installable as an extra; a C-alpha trace is rendered from the deposited "
+                "coordinates instead."
             ),
             "pdb_id": pdb_id.upper(),
         }

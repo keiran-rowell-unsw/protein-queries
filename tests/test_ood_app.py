@@ -198,3 +198,60 @@ def test_ssh_host_config_rejects_shell_input(monkeypatch, tmp_path, host):
     monkeypatch.setattr(ood_app, "HOST", host)
     with pytest.raises(RuntimeError):
         ood_app.run_report("ACDE", tmp_path)
+
+
+def test_every_figure_the_report_emits_is_an_allowed_file():
+    """The report and the file allowlist are edited together or the page shows broken images.
+
+    Both halves of the OOD app gate a request through a literal filename set, and each
+    figure also needs a Content-Type. A name missing from either is a 404 or an inline
+    blob rather than an error, so this checks the two lists against the report's own
+    output instead of against a copy of the same list.
+    """
+    import re
+    from pathlib import Path
+
+    report_source = Path("src/protein_agent/report.py").read_text()
+    sections_source = Path("src/protein_agent/report_sections.py").read_text()
+    served = set(re.findall(r'(?:src|href)="([a-z]+\.png)"', report_source + sections_source))
+    assert served, "no figure is referenced by the report, so this test has stopped testing"
+    assert served <= set(ood_app.FILES), served - set(ood_app.FILES)
+
+
+def test_the_local_handler_serves_every_figure_the_report_emits(tmp_path):
+    """Same check against web.py's separate allowlist and its separate MIME map.
+
+    The two lists are written out twice in that handler; a name present in one and
+    absent from the other is a KeyError in the response path rather than a clean 404.
+    """
+    import re
+    from http.server import ThreadingHTTPServer
+    from pathlib import Path
+    from threading import Thread
+    from urllib.request import urlopen
+
+    from protein_agent.web import make_handler
+
+    report_source = Path("src/protein_agent/report.py").read_text()
+    sections_source = Path("src/protein_agent/report_sections.py").read_text()
+    served = set(re.findall(r'(?:src|href)="([a-z]+\.png)"', report_source + sections_source))
+    assert {"hydropathy.png", "positions.png"} <= served
+
+    token = "c" * 32
+    folder = tmp_path / token
+    folder.mkdir()
+    for name in served:
+        (folder / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 200)
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), make_handler(tmp_path)) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            for name in sorted(served):
+                with urlopen(f"{base}/results/{token}/{name}") as response:
+                    assert response.status == 200, name
+                    assert response.headers["Content-Type"] == "image/png", name
+        finally:
+            server.shutdown()
+            thread.join()
