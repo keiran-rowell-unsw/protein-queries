@@ -19,6 +19,14 @@ from .disorder import predict_disorder
 from .pdbe_report import fetch_pdbe_structures
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
+from .report_sections import (
+    build_motifs,
+    build_position_map,
+    build_structure_display,
+    render_motif_section,
+    render_position_map_section,
+    render_structure_section,
+)
 from .uniprot_report import fetch_annotations, find_sequence_annotations
 
 MAX_INPUT_BYTES = 100_000
@@ -747,6 +755,8 @@ def render_html(data: dict, *, generated_at: str) -> str:
 <img src="hydropathy.png" alt="Hydropathy profile across the submitted sequence">
 <p><a href="hydropathy.png" download>Download the hydropathy image</a></p>
 {disorder_section}
+{render_position_map_section(data)}
+{render_motif_section(data)}
 <details><summary>Amino-acid composition</summary>
 <p>Counts, share of the sequence, and enrichment relative to a reference composition.</p>
 <table>{composition}</table></details>
@@ -760,6 +770,7 @@ def render_html(data: dict, *, generated_at: str) -> str:
 sequence-only flag does not establish actual expression or solubility.</p></details>
 {motif_section}
 {_uniprot_section(data['uniprot'])}
+{render_structure_section(data)}
 {_pdbe_section(data['pdbe'])}
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
@@ -836,6 +847,13 @@ def generate_report(
             "reason": "A verified UniProt accession is required before PDBe lookup.",
         }
     )
+    # Motifs and the position map are derived from the analysed sequence, plus the feature
+    # list already fetched above; the structure section ranks the PDBe mappings already held.
+    data["predicted_motifs"] = build_motifs(sequence, uniprot)
+    data["position_map"] = build_position_map(
+        sequence, uniprot, data["predicted_motifs"], output_dir / "positions.png"
+    )
+    data["structure_display"] = build_structure_display(data, output_dir)
     (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     report = output_dir / "report.html"
     report.write_text(render_html(data, generated_at=data["generated_at_utc"]), encoding="utf-8")

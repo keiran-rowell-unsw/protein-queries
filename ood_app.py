@@ -27,7 +27,9 @@ MAX_CHAT_BODY = 20_000
 MAX_CHAT_MESSAGES = 12
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
-         "hydropathy.png": "image/png", "disorder.png": "image/png"}
+         "hydropathy.png": "image/png", "disorder.png": "image/png",
+         "positions.png": "image/png", "structure.png": "image/png",
+         "ligands.png": "image/png"}
 CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'"
 
 

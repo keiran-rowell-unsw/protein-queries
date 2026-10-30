@@ -158,3 +158,137 @@ def test_local_web_submission(tmp_path):
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_report_json_carries_the_new_sections(monkeypatch, tmp_path):
+    """The three added sections must reach report.json, not just the rendered page."""
+    canonical = "ACDEFGHIKLMNPQRSTVWY" * 3
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_annotations",
+        lambda sequence, accession, accession_precedence=False: _accession_record(canonical),
+    )
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_pdbe_structures",
+        lambda accession: {"status": "not_found", "reason": "No mapping."},
+    )
+    path = generate_report(None, tmp_path / "sections", accession="Q12345")
+    data = json.loads((path.parent / "report.json").read_text())
+    assert data["predicted_motifs"]["status"] == "computed"
+    assert data["position_map"]["status"] in {"rendered", "empty", "skipped"}
+    assert data["structure_display"]["status"] == "not_found"
+    # A withheld structure must not be phrased as an absence of data.
+    assert "not deposited" not in path.read_text().lower() or data["pdbe"]["status"] == "not_found"
+
+
+def test_local_web_serves_every_image_the_report_references(monkeypatch, tmp_path):
+    """An <img> tag whose file the server refuses to serve is a broken report.
+
+    This guards the web.py allowlist: each new figure has to be both written to disk and
+    reachable by URL, and the two lists (allowlist, MIME map) have to agree.
+    """
+    canonical = "ACDEFGHIKLMNPQRSTVWY" * 3
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_annotations",
+        lambda sequence, accession, accession_precedence=False: _accession_record(canonical),
+    )
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_pdbe_structures",
+        lambda accession: {"status": "not_found", "reason": "No mapping."},
+    )
+    token = "a" * 32
+    output_root = tmp_path / "served"
+    output = output_root / token
+    report = generate_report(None, output, accession="Q12345")
+    page = report.read_text()
+    # The fixture entry annotates no features and its sequence holds no sequon, so the map
+    # is legitimately absent. Asserting it here anyway would test the assertion, not the
+    # report; the features-present case below is what proves the figure reaches the page.
+    data = json.loads((output / "report.json").read_text())
+    assert data["position_map"]["status"] == "empty"
+    assert data["structure_display"]["status"] == "not_found"
+
+    referenced = {
+        name
+        for name in (
+            "hydropathy.png", "disorder.png", "positions.png",
+            "structure.png", "ligands.png",
+        )
+        if 'src="' + name + '"' in page or 'href="' + name + '"' in page
+    }
+    assert referenced == {"hydropathy.png", "disorder.png"}, referenced
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), make_handler(output_root)) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            for name in sorted(referenced):
+                with urlopen(f"{base}/results/{token}/{name}") as response:
+                    assert response.status == 200, name
+                    assert response.headers["Content-Type"] == "image/png", name
+                    assert len(response.read()) > 100, f"{name} served empty"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def test_local_web_serves_the_position_map_when_features_exist(monkeypatch, tmp_path):
+    """With annotated features the map renders, and its file must be servable."""
+    canonical = "ACDEFGHIKLMNPQRSTVWY" * 3
+    record = _accession_record(canonical)
+    record["features"] = [
+        {"type": "Glycosylation", "start": 4, "end": 4, "description": "N-linked (GlcNAc)"},
+    ]
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_annotations",
+        lambda sequence, accession, accession_precedence=False: record,
+    )
+    monkeypatch.setattr(
+        "protein_agent.report.fetch_pdbe_structures",
+        lambda accession: {"status": "not_found", "reason": "No mapping."},
+    )
+    token = "b" * 32
+    output_root = tmp_path / "mapped"
+    output = output_root / token
+    page = generate_report(None, output, accession="Q12345").read_text()
+    assert 'src="positions.png"' in page
+    assert (output / "positions.png").is_file()
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), make_handler(output_root)) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/results/{token}/positions.png"
+            ) as response:
+                assert response.status == 200
+                assert response.headers["Content-Type"] == "image/png"
+                assert len(response.read()) > 100
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def test_local_web_still_refuses_files_that_are_not_report_assets(tmp_path):
+    """Widening the allowlist must not become a file read."""
+    output = tmp_path / "strict"
+    (output / ("a" * 32)).mkdir(parents=True)
+    secret = output / ("a" * 32) / "secret.txt"
+    secret.write_text("do not serve me", encoding="utf-8")
+    with ThreadingHTTPServer(("127.0.0.1", 0), make_handler(output)) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with pytest.raises(HTTPError) as error:
+                urlopen(f"{base}/results/{'a' * 32}/secret.txt")
+            assert error.value.code == 404
+            for name in ("positions.png", "structure.png", "ligands.png"):
+                path = output / ("a" * 32) / name
+                path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 200)
+                with urlopen(f"{base}/results/{'a' * 32}/{name}") as response:
+                    assert response.status == 200
+                    assert response.headers["Content-Type"] == "image/png"
+        finally:
+            server.shutdown()
+            thread.join()

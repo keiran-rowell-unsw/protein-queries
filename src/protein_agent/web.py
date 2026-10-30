@@ -48,14 +48,18 @@ def make_handler(output_root: Path) -> type[BaseHTTPRequestHandler]:
             parts = path.strip("/").split("/")
             if len(parts) != 3 or parts[0] != "results" or len(parts[1]) != 32 or not all(
                 c in "0123456789abcdef" for c in parts[1]
-            ) or parts[2] not in {"report.html", "report.json", "hydropathy.png", "disorder.png"}:
+            ) or parts[2] not in {"report.html", "report.json", "hydropathy.png", "disorder.png",
+                    "positions.png", "structure.png", "ligands.png"}:
                 self.send_error(404)
                 return
             file = output_root / parts[1] / parts[2]
             if not file.is_file():
                 self.send_error(404)
                 return
-            mime = {"report.html": "text/html; charset=utf-8", "report.json": "application/json", "hydropathy.png": "image/png", "disorder.png": "image/png"}[parts[2]]
+            mime = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
+                    "hydropathy.png": "image/png", "disorder.png": "image/png",
+                    "positions.png": "image/png", "structure.png": "image/png",
+                    "ligands.png": "image/png"}[parts[2]]
             self._send(200, file.read_bytes(), mime)
 
         def do_POST(self) -> None:
