@@ -32,11 +32,13 @@ If exactly one matches, the verified accession and its annotations are shown. Th
 then uses the dynamically discovered PDBe API MCP ranked-structure tool to show up to ten
 experimental PDB mappings with method, resolution when returned, chain and UniProt coverage.
 If matches are ambiguous, it lists candidates and asks the researcher to enter a specific
-accession; it never selects the first hit. An **optional UniProt accession** bypasses auto-search and
-fetches that UniProtKB entry directly. Signal peptides, glycosylation sites, modified
-residues, cross-links and annotated absorption are displayed **only if the submitted
-sequence exactly matches that entry's canonical sequence**. A missing hit, isoform or
-construct mismatch, network failure, or ambiguous match is stated, not guessed past.
+accession; it never selects the first hit. A **UniProt accession may be supplied without a
+sequence** and takes precedence when both are present. The report then retrieves and analyses
+the accession's canonical sequence. If a submitted sequence differs, that mismatch is stated
+and the submitted sequence is not analysed. UniProt sections cover experimental-structure
+cross-references, localisation, glycosylation, PTMs, subunit organisation, domains,
+functional sites, catalytic activity, PPI records, variants and annotation evidence.
+A missing hit, network failure, or ambiguous sequence match is stated, not guessed past.
 Only a checksum goes into the search URL; the full sequence is verified against its
 returned record. This is an **exact** search, not a BLAST or similarity search: variants,
 tags, fragments and isoforms without a canonical match will not be identified.
@@ -45,7 +47,7 @@ AlphaFold confidence analysis, structure prediction, Protein-sol,
 SoDoPE, SignalP/Razor, AI summaries, ChimeraX surface MLP or queued programs.
 Metapredict predicts disorder, **not solubility**. Identity is unresolved without a
 matching accession; experimental structures are reported only from PDBe mappings to a
-sequence-verified accession. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
+verified accession. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
 than 10,000 residues are rejected rather than silently changed.
 
 For a local test only:
@@ -55,8 +57,8 @@ For a local test only:
 # On the same node: visit http://127.0.0.1:8765/
 # Or generate a report without a web service:
 .venv/bin/python -m protein_agent.report --input input.fasta --output results
-# With a known, matching UniProt accession (otherwise exact-sequence search runs):
-.venv/bin/python -m protein_agent.report --input input.fasta --output results --accession YOUR_ACCESSION
+# A UniProt accession works without sequence input and takes precedence if both are supplied:
+.venv/bin/python -m protein_agent.report --output results --accession YOUR_ACCESSION
 ```
 
 ### Open OnDemand Passenger app (no PBS queue)

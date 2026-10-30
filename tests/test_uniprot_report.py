@@ -84,6 +84,82 @@ def test_invalid_accession_never_queries():
 
 
 @respx.mock
+def test_detailed_annotation_sections_render_only_returned_uniprot_fields():
+    detailed = {
+        **ENTRY,
+        "organism": {"scientificName": "Homo sapiens", "taxonId": 9606},
+        "features": [
+            *ENTRY["features"],
+            {"type": "Domain", "location": {"start": {"value": 4}, "end": {"value": 20}},
+             "description": "Catalytic domain"},
+            {"type": "Active site", "location": {"start": {"value": 18},
+                                                    "end": {"value": 18}},
+             "description": "Proton donor", "evidences": [{"evidenceCode": "ECO:0000269",
+                                                               "source": "PubMed", "id": "1"}]},
+            {"type": "Natural variant", "location": {"start": {"value": 21},
+                                                        "end": {"value": 21}},
+             "featureId": "VAR_000001", "description": "Example variant",
+             "alternativeSequence": {"originalSequence": "A",
+                                     "alternativeSequences": ["V"]}},
+        ],
+        "comments": [
+            *ENTRY["comments"],
+            {"commentType": "SUBCELLULAR LOCATION", "subcellularLocations": [
+                {"location": {"value": "Cytoplasm", "evidences": [
+                    {"evidenceCode": "ECO:0000269", "source": "PubMed", "id": "3"}
+                ]}, "topology": {"value": "Peripheral"}}
+            ]},
+            {"commentType": "MASS SPECTROMETRY", "method": "Electrospray",
+             "molWeight": 1234.5, "range": {"start": {"value": 2},
+                                              "end": {"value": 39}}},
+            {"commentType": "PTM", "texts": [{"value": "Phosphorylated after activation."}]},
+            {"commentType": "SUBUNIT", "texts": [{"value": "Forms a homodimer."}]},
+            {"commentType": "FUNCTION", "texts": [{"value": "Cleaves an example substrate."}]},
+            {"commentType": "CATALYTIC ACTIVITY", "reaction": {
+                "name": "A + H2O = B.", "ecNumber": "1.2.3.4",
+                "evidences": [{"evidenceCode": "ECO:0000269", "source": "PubMed",
+                               "id": "2"}],
+            }},
+            {"commentType": "INTERACTION", "interactions": [{
+                "interactantOne": {"uniProtKBAccession": "Q12345"},
+                "interactantTwo": {"uniProtKBAccession": "Q54321", "geneName": "PARTNER",
+                                    "intActId": "EBI-1"},
+                "numberOfExperiments": 3,
+            }]},
+        ],
+        "uniProtKBCrossReferences": [
+            {"database": "PDB", "id": "1ABC", "properties": [
+                {"key": "Method", "value": "X-ray"},
+                {"key": "Resolution", "value": "1.5 A"},
+                {"key": "Chains", "value": "A=1-40"},
+            ]},
+            {"database": "IntAct", "id": "Q12345", "properties": [
+                {"key": "Interactions", "value": "1"}
+            ]},
+            {"database": "InterPro", "id": "IPR000001", "properties": []},
+        ],
+    }
+    respx.get("https://uniprot.test/uniprotkb/Q12345.json").mock(
+        return_value=httpx.Response(200, json=detailed)
+    )
+    record = fetch_annotations(SEQUENCE, "Q12345", client=make_client())
+    page = _uniprot_section(record)
+    for expected in (
+        "Experimental structures", "1ABC", "X-ray", "Mass-spectrometry protocol",
+        "Electrospray", "Localisation", "Cytoplasm; Peripheral; evidence: ECO:0000269",
+        "Glycosylation sites", "Post-translational modifications",
+        "Phosphorylated after activation", "Stoichiometry / subunit organisation",
+        "Forms a homodimer", "Domain boundaries", "Catalytic domain",
+        "Functional / active sites", "Proton donor", "Catalytic activity", "EC 1.2.3.4",
+        "Protein-protein interactions", "PARTNER", "Variants", "VAR_000001",
+        "AlphaMissense classifications were not returned",
+    ):
+        assert expected in page
+    assert len(record["features"]) == len(detailed["features"])
+    assert record["organism_details"]["taxonId"] == 9606
+
+
+@respx.mock
 def test_sequence_checksum_search_verifies_candidate_and_entry():
     checksum = crc64(SEQUENCE).removeprefix("CRC-")
     endpoint = respx.get("https://uniprot.test/uniparc/search").mock(

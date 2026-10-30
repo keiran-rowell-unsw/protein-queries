@@ -23,8 +23,46 @@ from .retrieval import RetrievalError, UniProtClient
 # which are split on "." upstream and must never carry a hyphen or isoform suffix.
 USER_ACCESSION = re.compile(r"(?:[A-Z0-9]{6,10}|[A-Z0-9]{5,10}-[0-9]{1,2})\Z")
 ACCESSION = re.compile(r"[A-Z0-9]{6,10}\Z")
-ANNOTATION_TYPES = {"Modified residue", "Glycosylation", "Signal", "Cross-link"}
 MAX_CANDIDATES = 4
+
+
+def _normalise_evidence(items: list[Any] | None) -> list[dict[str, Any]]:
+    return [
+        {
+            "code": item.get("evidenceCode"),
+            "source": item.get("source"),
+            "id": item.get("id"),
+        }
+        for item in items or []
+        if isinstance(item, dict)
+    ]
+
+
+def _normalise_feature(feature: dict[str, Any]) -> dict[str, Any]:
+    location = feature.get("location") or {}
+    return {
+        "type": feature.get("type"),
+        "start": (location.get("start") or {}).get("value"),
+        "end": (location.get("end") or {}).get("value"),
+        "start_modifier": (location.get("start") or {}).get("modifier"),
+        "end_modifier": (location.get("end") or {}).get("modifier"),
+        "description": feature.get("description"),
+        "feature_id": feature.get("featureId"),
+        "ligand": feature.get("ligand"),
+        "alternative_sequence": feature.get("alternativeSequence"),
+        "cross_references": feature.get("featureCrossReferences") or [],
+        "evidence": _normalise_evidence(feature.get("evidences")),
+    }
+
+
+def _interaction_comments(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        interaction
+        for comment in comments
+        if comment.get("commentType") == "INTERACTION"
+        for interaction in comment.get("interactions") or []
+        if isinstance(interaction, dict)
+    ]
 
 
 def fetch_annotations(
@@ -33,8 +71,14 @@ def fetch_annotations(
     *,
     client: UniProtClient | None = None,
     max_attempts: int = 2,
+    accession_precedence: bool = False,
 ) -> dict[str, Any]:
-    """Return verified entry facts or an explicit mismatch/failure; never partial facts."""
+    """Return entry facts after sequence verification, or use the accession as authority.
+
+    ``accession_precedence`` is for accession-first report generation: the canonical entry
+    sequence is returned for analysis even when no sequence was submitted. The default
+    remains strict equality so sequence-derived identity cannot silently attach annotations.
+    """
     acc = accession.strip().upper()
     if not USER_ACCESSION.fullmatch(acc):
         return {"status": "invalid", "reason": "Enter a valid UniProt accession."}
@@ -71,7 +115,12 @@ def fetch_annotations(
                 ),
             }
         canonical = (entry.get("sequence") or {}).get("value") or ""
-        if not canonical or canonical != sequence:
+        if not canonical:
+            return {
+                "status": "unavailable",
+                "reason": "This UniProt entry did not return a canonical sequence.",
+            }
+        if not accession_precedence and canonical != sequence:
             return {
                 "status": "mismatch",
                 "reason": (
@@ -80,37 +129,32 @@ def fetch_annotations(
                     "constructs, tags, and variants."
                 ),
             }
-        features = []
-        for feature in entry.get("ftFeatures") or []:
-            if feature.get("type") not in ANNOTATION_TYPES:
-                continue
-            location = feature.get("location") or {}
-            features.append({
-                "type": feature["type"],
-                "start": (location.get("start") or {}).get("value"),
-                "end": (location.get("end") or {}).get("value"),
-                "description": feature.get("description"),
-                "evidence": [
-                    {"code": item.get("evidenceCode"), "source": item.get("source"),
-                     "id": item.get("id")}
-                    for item in feature.get("evidences") or [] if isinstance(item, dict)
-                ],
-            })
+        features = [
+            _normalise_feature(feature)
+            for feature in entry.get("ftFeatures") or []
+            if isinstance(feature, dict) and feature.get("type")
+        ]
+        comments = entry.get("comments") or []
+        interactions = list(entry.get("proteinInteractions") or [])
+        interactions.extend(_interaction_comments(comments))
         absorption = (entry.get("photochemistry") or {}).get("absorption")
         return {
             "status": "verified",
             "accession": entry.get("primaryAccession") or acc,
             "organism": entry.get("organism"),
+            "organism_details": entry.get("organismDetails") or {},
             "entry_type": entry.get("entryType"),
             "entry_version": entry.get("entryVersion"),
             "retrieved_at": (entry.get("_provenance") or {}).get("retrieved_at"),
-            "canonical_sequence_match": True,
+            "canonical_sequence_match": canonical == sequence if sequence else None,
+            "identity_basis": "supplied_accession" if accession_precedence else "exact_sequence",
+            "canonical_sequence": canonical if accession_precedence else None,
             "protein_description": entry.get("proteinDescription"),
             "genes": entry.get("genes") or [],
-            "comments": entry.get("comments") or [],
+            "comments": comments,
             "keywords": entry.get("keywords") or [],
             "cross_references": entry.get("uniProtKBCrossReferences") or [],
-            "protein_interactions": entry.get("proteinInteractions") or [],
+            "protein_interactions": interactions,
             "entry_audit": entry.get("entryAudit") or {},
             "features": features,
             "absorption": absorption,

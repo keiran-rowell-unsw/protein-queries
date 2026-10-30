@@ -284,7 +284,8 @@ class UniProtClient:
                 for x in entry.get("uniProtKBCrossReferences") or []
                 if x.get("database") in {
                     "PDB", "GO", "Ensembl", "RefSeq", "AlphaFoldDB", "InterPro",
-                    "Pfam", "Reactome", "ChEBI",
+                    "Pfam", "Reactome", "ChEBI", "IntAct", "BioGRID", "MINT", "DIP",
+                    "STRING", "ComplexPortal", "CORUM", "AlphaMissense",
                 }
             ],
             "entryAudit": {

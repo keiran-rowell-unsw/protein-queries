@@ -23,12 +23,13 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Protein report</title>
 <style>body{{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}}
 textarea{{width:100%;box-sizing:border-box}}button{{padding:.6rem 1rem}}</style></head><body>
-<h1>Protein sequence report</h1><p>Runs locally on this node. Paste one FASTA record or bare sequence
-(up to 10,000 standard amino acids). Exact matches are verified through UniProt; a verified
-accession is then used to retrieve ranked experimental structure mappings from PDBe.</p>
-{message}<form method="post" action="/run"><label for="sequence">Protein sequence</label><br>
-<textarea id="sequence" name="sequence" rows="12" required maxlength="100000"></textarea><br>
-<label for="accession">UniProt accession (optional; exact sequence match required)</label><br>
+<h1>Protein sequence report</h1><p>Runs locally on this node. Supply a UniProt accession,
+one FASTA record, or a bare sequence (up to 10,000 standard amino acids). The accession
+takes precedence when both are supplied. Without one, an exact sequence match is sought in
+UniProt. A verified accession is used to retrieve ranked structure mappings from PDBe.</p>
+{message}<form method="post" action="/run"><label for="sequence">Protein sequence (optional if accession supplied)</label><br>
+<textarea id="sequence" name="sequence" rows="12" maxlength="100000"></textarea><br>
+<label for="accession">UniProt accession (optional; takes precedence over sequence)</label><br>
 <input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{{6,10}}(-[0-9]{{1,2}})?" placeholder="e.g. P04637 or P04637-1" inputmode="text" autocomplete="off" spellcheck="false"><br>
 <button type="submit">Generate report</button></form></body></html>"""
 
@@ -75,11 +76,16 @@ def make_handler(output_root: Path) -> type[BaseHTTPRequestHandler]:
 
                 raw = self.rfile.read(size).decode("utf-8", errors="strict")
                 fields = parse_qs(raw, keep_blank_values=True)
-                if (set(fields) - {"sequence", "accession"} or "sequence" not in fields
-                        or len(fields["sequence"]) != 1 or len(fields.get("accession", [])) > 1):
-                    raise SequenceError("submit exactly one sequence")
-                text = fields["sequence"][0]
+                if (
+                    set(fields) - {"sequence", "accession"}
+                    or len(fields.get("sequence", [])) > 1
+                    or len(fields.get("accession", [])) > 1
+                ):
+                    raise SequenceError("submit at most one sequence and one accession")
+                text = (fields.get("sequence") or [""])[0]
                 accession = (fields.get("accession") or [""])[0].strip().upper()
+                if not text.strip() and not accession:
+                    raise SequenceError("provide either a protein sequence or a UniProt accession")
                 token = secrets.token_hex(16)
                 folder = output_root / token
                 folder.mkdir(mode=0o700, parents=True)

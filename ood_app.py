@@ -44,14 +44,15 @@ def page(prefix, csrf, message=""):
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Protein Sequence Report</title>
 <style>body{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}
 textarea{width:100%%;box-sizing:border-box}button{padding:.6rem 1rem}</style></head><body>
-<h1>Protein Sequence Report</h1><p>One FASTA record or bare protein sequence; up to 10,000
-standard amino acids. The report verifies exact UniProt-linked sequences; if multiple
-entries match, you can choose one with an accession. A verified accession is used to
-retrieve experimental structure mappings from PDBe. No PBS submission is made.</p>
+<h1>Protein Sequence Report</h1><p>Supply a UniProt accession, one FASTA record, or a bare
+protein sequence (up to 10,000 standard amino acids). An accession takes precedence when
+both are supplied. Without one, the sequence is matched exactly to UniProt. A verified
+accession is used to retrieve experimental structure mappings from PDBe. No PBS submission
+is made.</p>
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
-<label for="sequence">Sequence</label><br><textarea id="sequence" name="sequence" rows="12"
-maxlength="100000" required></textarea><br>
-<label for="accession">UniProt accession (optional; leave blank for exact sequence search)</label><br>
+<label for="sequence">Sequence (optional if accession supplied)</label><br><textarea id="sequence" name="sequence" rows="12"
+maxlength="100000"></textarea><br>
+<label for="accession">UniProt accession (optional; takes precedence)</label><br>
 <input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"><br>
 <button type="submit">Generate report</button>
 </form></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
@@ -125,16 +126,19 @@ def application(environ, start_response):
                     not hmac.compare_digest(stored, submitted[0])):
                 return respond(start_response, "403 Forbidden", "Invalid form token. Reload the app.")
             if (set(fields) - {"csrf", "sequence", "accession"}
-                    or "sequence" not in fields or len(fields["sequence"]) != 1
+                    or len(fields.get("sequence", [])) > 1
                     or len(fields.get("accession", [])) > 1):
-                raise ValueError("submit exactly one protein sequence")
-            text = fields["sequence"][0]
+                raise ValueError("submit at most one sequence and one accession")
+            text = (fields.get("sequence") or [""])[0]
             accession = (fields.get("accession") or [""])[0].strip().upper()
             if accession and not re.fullmatch(r"[A-Z0-9]{6,10}(?:-[0-9]{1,2})?", accession):
                 raise ValueError("invalid UniProt accession")
             if len(text.encode("utf-8")) > 100_000:
                 raise ValueError("sequence input exceeds 100 KB")
-            validate_sequence(text)
+            if not text.strip() and not accession:
+                raise ValueError("provide either a protein sequence or a UniProt accession")
+            if text.strip() and not accession:
+                validate_sequence(text)
             # The remote parser rechecks the same input before computation.
             token = secrets.token_hex(16)
             ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)

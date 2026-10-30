@@ -78,8 +78,409 @@ def _protein_name(description: object) -> str | None:
     return None
 
 
+def _evidence_label(items: list[dict] | None) -> str:
+    return ", ".join(
+        " ".join(str(item[key]) for key in ("code", "source", "id") if item.get(key))
+        for item in items or []
+        if isinstance(item, dict)
+    )
+
+
+def _feature_position(feature: dict) -> str:
+    start, end = feature.get("start"), feature.get("end")
+    if start is None and end is None:
+        return "position not returned"
+    start_text = str(start if start is not None else end)
+    end_text = str(end if end is not None else start)
+    if feature.get("start_modifier") not in {None, "EXACT"}:
+        start_text = str(feature["start_modifier"]) + " " + start_text
+    if feature.get("end_modifier") not in {None, "EXACT"}:
+        end_text = str(feature["end_modifier"]) + " " + end_text
+    return start_text if start_text == end_text else f"{start_text}-{end_text}"
+
+
+def _feature_detail(feature: dict) -> str:
+    parts = [f"Residue(s) {_feature_position(feature)}"]
+    if feature.get("description"):
+        parts.append(str(feature["description"]))
+    ligand = feature.get("ligand") or {}
+    ligand_name = ligand.get("name") if isinstance(ligand, dict) else None
+    if ligand_name:
+        parts.append("ligand: " + str(ligand_name))
+    alternative = feature.get("alternative_sequence") or {}
+    if isinstance(alternative, dict):
+        original = alternative.get("originalSequence")
+        replacements = alternative.get("alternativeSequences") or []
+        if original and replacements:
+            parts.append(f"{original} → {', '.join(map(str, replacements))}")
+    if feature.get("feature_id"):
+        parts.append("feature: " + str(feature["feature_id"]))
+    cross_references = feature.get("cross_references") or []
+    if cross_references:
+        parts.append(
+            "cross-references: "
+            + ", ".join(
+                " ".join(
+                    str(value)
+                    for value in (item.get("database"), item.get("id"))
+                    if value
+                )
+                for item in cross_references
+                if isinstance(item, dict)
+            )
+        )
+    evidence = _evidence_label(feature.get("evidence"))
+    if evidence:
+        parts.append("evidence: " + evidence)
+    return "; ".join(parts)
+
+
+def _feature_section(
+    title: str, features: list[dict], types: set[str], *, empty: str
+) -> str:
+    selected = [item for item in features if item.get("type") in types]
+    if not selected:
+        return f"<h3>{html.escape(title)}</h3><p>{html.escape(empty)}</p>"
+    rows = "".join(
+        _row(str(item.get("type") or "Feature"), _feature_detail(item))
+        for item in selected
+    )
+    return f"<h3>{html.escape(title)}</h3><table>{rows}</table>"
+
+
+def _comment_texts(comment: dict) -> list[str]:
+    values: list[str] = []
+    for item in comment.get("texts") or []:
+        if isinstance(item, dict) and item.get("value"):
+            text = str(item["value"])
+            evidence = _evidence_label([
+                {
+                    "code": evidence_item.get("evidenceCode"),
+                    "source": evidence_item.get("source"),
+                    "id": evidence_item.get("id"),
+                }
+                for evidence_item in item.get("evidences") or []
+                if isinstance(evidence_item, dict)
+            ])
+            values.append(text + (f" (evidence: {evidence})" if evidence else ""))
+    return values
+
+
+def _text_comment_section(
+    title: str, comments: list[dict], comment_types: set[str], *, empty: str
+) -> str:
+    values = [
+        value
+        for comment in comments
+        if comment.get("commentType") in comment_types
+        for value in _comment_texts(comment)
+    ]
+    if not values:
+        return f"<h3>{html.escape(title)}</h3><p>{html.escape(empty)}</p>"
+    return (
+        f"<h3>{html.escape(title)}</h3><ul>"
+        + "".join(f"<li>{html.escape(value)}</li>" for value in values)
+        + "</ul>"
+    )
+
+
+def _pdb_section(cross_references: list[dict], comments: list[dict]) -> str:
+    pdb_refs = [item for item in cross_references if item.get("database") == "PDB"]
+    shown_refs = pdb_refs[:20]
+    rows = []
+    for item in shown_refs:
+        properties = {
+            str(prop.get("key")): prop.get("value")
+            for prop in item.get("properties") or []
+            if isinstance(prop, dict) and prop.get("key")
+        }
+        pdb_id = str(item.get("id") or "")
+        detail_values = []
+        for key in ("Method", "Resolution", "Chains"):
+            value = properties.get(key)
+            if value and value != "-":
+                detail_values.append(str(value))
+        details = " · ".join(detail_values) or "No method, resolution, or chain coverage returned"
+        url = html.escape(
+            "https://www.ebi.ac.uk/pdbe/entry/pdb/" + pdb_id.lower(), quote=True
+        )
+        rows.append(
+            f"<tr><th scope='row'><a href=\"{url}\">{html.escape(pdb_id)}</a></th>"
+            f"<td>{html.escape(details)}</td></tr>"
+        )
+    output = "<h3>Experimental structures</h3>"
+    if rows:
+        output += (
+            "<p>UniProt PDB cross-references; chain ranges may cover only a construct "
+            "or domain.</p><table>" + "".join(rows) + "</table>"
+        )
+        if len(pdb_refs) > len(shown_refs):
+            output += (
+                f"<p>Showing {len(shown_refs)} of {len(pdb_refs)} PDB cross-references; "
+                "all are retained in report.json.</p>"
+            )
+    else:
+        output += "<p>No experimental structure is cross-referenced in this UniProt entry.</p>"
+
+    mass_spec: list[str] = []
+    for comment in comments:
+        if comment.get("commentType") != "MASS SPECTROMETRY":
+            continue
+        parts = []
+        for key, label in (
+            ("method", "method"), ("mass", "mass"), ("molWeight", "mass"),
+            ("error", "error"), ("moleculeType", "molecule type"),
+        ):
+            if comment.get(key) is not None:
+                parts.append(f"{label}: {comment[key]}")
+        raw_positions = comment.get("positions") or comment.get("range") or []
+        positions = [raw_positions] if isinstance(raw_positions, dict) else raw_positions
+        position_text = [
+            _feature_position({
+                "start": (position.get("start") or {}).get("value"),
+                "end": (position.get("end") or {}).get("value"),
+            })
+            for position in positions
+            if isinstance(position, dict)
+        ]
+        if position_text:
+            parts.append("positions: " + ", ".join(position_text))
+        evidence = _evidence_label([
+            {
+                "code": item.get("evidenceCode"),
+                "source": item.get("source"),
+                "id": item.get("id"),
+            }
+            for item in comment.get("evidences") or []
+            if isinstance(item, dict)
+        ])
+        if evidence:
+            parts.append("evidence: " + evidence)
+        mass_spec.append("; ".join(parts) or "Mass-spectrometry annotation returned")
+    output += "<h3>Mass-spectrometry protocol</h3>"
+    if mass_spec:
+        output += "<ul>" + "".join(
+            f"<li>{html.escape(value)}</li>" for value in mass_spec
+        ) + "</ul>"
+    else:
+        output += "<p>Mass-spectrometry protocol details are not annotated in this entry.</p>"
+    return output
+
+
+def _localisation_section(comments: list[dict], features: list[dict]) -> str:
+    locations: list[str] = []
+    for comment in comments:
+        if comment.get("commentType") != "SUBCELLULAR LOCATION":
+            continue
+        for item in comment.get("subcellularLocations") or []:
+            parts = []
+            evidence_items = []
+            for key in ("location", "topology", "orientation"):
+                node = item.get(key) or {} if isinstance(item, dict) else {}
+                if node.get("value"):
+                    parts.append(str(node["value"]))
+                evidence_items.extend(node.get("evidences") or [])
+            evidence = _evidence_label([
+                {
+                    "code": evidence_item.get("evidenceCode"),
+                    "source": evidence_item.get("source"),
+                    "id": evidence_item.get("id"),
+                }
+                for evidence_item in evidence_items
+                if isinstance(evidence_item, dict)
+            ])
+            if evidence:
+                parts.append("evidence: " + evidence)
+            if parts:
+                locations.append("; ".join(parts))
+        locations.extend(_comment_texts(comment.get("note") or {}))
+    topology_types = {"Transmembrane", "Intramembrane", "Topological domain", "Signal",
+                      "Transit peptide"}
+    topology = [item for item in features if item.get("type") in topology_types]
+    if not locations and not topology:
+        return (
+            "<h3>Localisation</h3>"
+            "<p>Subcellular localisation and membrane topology are not annotated in this entry.</p>"
+        )
+    output = "<h3>Localisation</h3>"
+    if locations:
+        output += "<ul>" + "".join(
+            f"<li>{html.escape(value)}</li>" for value in locations
+        ) + "</ul>"
+    if topology:
+        output += "<table>" + "".join(
+            _row(str(item["type"]), _feature_detail(item)) for item in topology
+        ) + "</table>"
+    return output
+
+
+def _catalytic_section(comments: list[dict]) -> str:
+    reactions: list[str] = []
+    for comment in comments:
+        if comment.get("commentType") != "CATALYTIC ACTIVITY":
+            continue
+        reaction = comment.get("reaction") or {}
+        parts = []
+        if reaction.get("name"):
+            parts.append(str(reaction["name"]))
+        if reaction.get("ecNumber"):
+            parts.append("EC " + str(reaction["ecNumber"]))
+        reaction_refs = reaction.get("reactionCrossReferences") or []
+        if reaction_refs:
+            parts.append(
+                "reaction cross-references: "
+                + ", ".join(
+                    " ".join(
+                        str(value)
+                        for value in (item.get("database"), item.get("id"))
+                        if value
+                    )
+                    for item in reaction_refs
+                    if isinstance(item, dict)
+                )
+            )
+        physiological = comment.get("physiologicalReactions") or []
+        for item in physiological:
+            direction = item.get("directionType") if isinstance(item, dict) else None
+            if direction:
+                parts.append("physiological direction: " + str(direction))
+        evidence = _evidence_label([
+            {
+                "code": item.get("evidenceCode"),
+                "source": item.get("source"),
+                "id": item.get("id"),
+            }
+            for item in reaction.get("evidences") or []
+            if isinstance(item, dict)
+        ])
+        if evidence:
+            parts.append("evidence: " + evidence)
+        if parts:
+            reactions.append("; ".join(parts))
+    if not reactions:
+        return (
+            "<h3>Catalytic activity</h3>"
+            "<p>Catalytic activity is not annotated in this UniProt entry.</p>"
+        )
+    return "<h3>Catalytic activity</h3><ul>" + "".join(
+        f"<li>{html.escape(value)}</li>" for value in reactions
+    ) + "</ul>"
+
+
+def _ppi_section(interactions: list[dict], cross_references: list[dict]) -> str:
+    shown_interactions = interactions[:50]
+    rows = []
+    for interaction in shown_interactions:
+        partner = interaction.get("interactantTwo") or {}
+        partner_label = partner.get("geneName") or partner.get("uniProtKBAccession")
+        if not partner_label:
+            partner_label = "interaction partner not named"
+        details = []
+        if partner.get("uniProtKBAccession"):
+            details.append(str(partner["uniProtKBAccession"]))
+        if partner.get("intActId"):
+            details.append("IntAct " + str(partner["intActId"]))
+        if interaction.get("numberOfExperiments") is not None:
+            details.append(f"{interaction['numberOfExperiments']} experiment(s)")
+        rows.append(_row(str(partner_label), "; ".join(details)))
+    ppi_databases = {"IntAct", "BioGRID", "MINT", "DIP", "STRING", "ComplexPortal", "CORUM"}
+    database_refs = [item for item in cross_references if item.get("database") in ppi_databases]
+    if not rows and not database_refs:
+        return (
+            "<h3>Protein-protein interactions</h3>"
+            "<p>No protein-interaction record or supported PPI database cross-reference is "
+            "annotated in this entry.</p>"
+        )
+    output = "<h3>Protein-protein interactions</h3>"
+    if rows:
+        output += f"<table>{''.join(rows)}</table>"
+        if len(interactions) > len(shown_interactions):
+            output += (
+                f"<p>Showing {len(shown_interactions)} of {len(interactions)} interaction "
+                "records; all are retained in report.json.</p>"
+            )
+    if database_refs:
+        output += "<p><strong>Database cross-references:</strong> " + html.escape(
+            ", ".join(
+                f"{item.get('database')} {item.get('id')}" for item in database_refs
+            )
+        ) + "</p>"
+    return output
+
+
+def _domain_section(features: list[dict], cross_references: list[dict], comments: list[dict]) -> str:
+    boundary_types = {"Domain", "Repeat", "Zinc finger", "Coiled coil", "Region", "Motif"}
+    boundaries = [item for item in features if item.get("type") in boundary_types]
+    domain_refs = [
+        item for item in cross_references if item.get("database") in {"InterPro", "Pfam"}
+    ]
+    domain_comments = [
+        value
+        for comment in comments
+        if comment.get("commentType") == "DOMAIN"
+        for value in _comment_texts(comment)
+    ]
+    if not boundaries and not domain_refs and not domain_comments:
+        return (
+            "<h3>Domain boundaries</h3>"
+            "<p>Domain boundaries are not annotated in this UniProt entry.</p>"
+        )
+    output = "<h3>Domain boundaries</h3>"
+    if boundaries:
+        output += "<table>" + "".join(
+            _row(str(item["type"]), _feature_detail(item)) for item in boundaries
+        ) + "</table>"
+    else:
+        output += "<p>No residue-level domain boundaries are annotated in this entry.</p>"
+    if domain_comments:
+        output += "<ul>" + "".join(
+            f"<li>{html.escape(value)}</li>" for value in domain_comments
+        ) + "</ul>"
+    if domain_refs:
+        output += "<p><strong>Domain database cross-references:</strong> " + html.escape(
+            ", ".join(f"{item.get('database')} {item.get('id')}" for item in domain_refs)
+        ) + "</p>"
+    return output
+
+
+def _variant_section(record: dict, features: list[dict]) -> str:
+    variants = [
+        item for item in features
+        if item.get("type") in {
+            "Natural variant", "Mutagenesis", "Sequence conflict", "Alternative sequence"
+        }
+    ]
+    output = "<h3>Variants</h3>"
+    if variants:
+        shown = variants[:50]
+        output += "<table>" + "".join(
+            _row(str(item["type"]), _feature_detail(item)) for item in shown
+        ) + "</table>"
+        if len(variants) > len(shown):
+            output += (
+                f"<p>Showing {len(shown)} of {len(variants)} UniProt variant features; "
+                "all are retained in report.json.</p>"
+            )
+    else:
+        output += "<p>Variants are not annotated in this UniProt entry.</p>"
+    alphamissense = [
+        item for item in record.get("cross_references") or []
+        if item.get("database") == "AlphaMissense"
+    ]
+    if alphamissense:
+        output += "<p><strong>AlphaMissense cross-references:</strong> " + html.escape(
+            ", ".join(str(item.get("id")) for item in alphamissense if item.get("id"))
+        ) + "</p>"
+    elif (record.get("organism_details") or {}).get("taxonId") == 9606:
+        output += (
+            "<p><strong>AlphaMissense:</strong> AlphaMissense classifications were not "
+            "returned by this UniProtKB REST entry, so they are not shown or inferred here.</p>"
+        )
+    return output
+
+
 def _uniprot_section(record: dict) -> str:
-    """Display only fetched fields for an exact canonical-sequence match."""
+    """Display fetched fields only after an exact canonical-sequence match."""
     if record["status"] == "not_requested":
         return (
             "<h2>UniProt annotations</h2><p>No accession was supplied. "
@@ -95,41 +496,86 @@ def _uniprot_section(record: dict) -> str:
             "<h2>UniProt annotations</h2><p>Not included: "
             + html.escape(record["reason"]) + suggestion + "</p>"
         )
-    rows = []
-    for feature in record["features"]:
-        start, end = feature["start"], feature["end"]
-        position = str(start) if start == end else f"{start}-{end}"
-        evidence = ", ".join(
-            " ".join(str(item[key]) for key in ("code", "source", "id") if item.get(key))
-            for item in feature["evidence"]
-        )
-        text = f"Residue(s) {position}: {feature['description'] or 'No description annotated'}"
-        if evidence:
-            text += f" (evidence: {evidence})"
-        rows.append(_row(feature["type"], text))
-    annotations = (
-        f"<table>{''.join(rows)}</table>" if rows else
-        "<p>No matching processing or modification features are annotated in this entry.</p>"
-    )
-    absorption = record["absorption"]
+    features = record.get("features") or []
+    comments = record.get("comments") or []
+    cross_references = record.get("cross_references") or []
+    annotation_sections = "".join([
+        _pdb_section(cross_references, comments),
+        _localisation_section(comments, features),
+        _feature_section(
+            "Glycosylation sites",
+            features,
+            {"Glycosylation"},
+            empty="Glycosylation sites are not annotated in this UniProt entry.",
+        ),
+        _feature_section(
+            "Post-translational modifications (PTMs)",
+            features,
+            {
+                "Modified residue", "Lipidation", "Disulfide bond", "Cross-link",
+                "Non-standard residue",
+            },
+            empty="Residue-level PTMs are not annotated in this UniProt entry.",
+        ),
+        _text_comment_section(
+            "PTM annotation notes",
+            comments,
+            {"PTM"},
+            empty="No additional PTM comment is annotated in this entry.",
+        ),
+        _text_comment_section(
+            "Stoichiometry / subunit organisation",
+            comments,
+            {"SUBUNIT"},
+            empty="Subunit organisation or stoichiometry is not annotated in this entry.",
+        ),
+        _domain_section(features, cross_references, comments),
+        _feature_section(
+            "Functional / active sites",
+            features,
+            {
+                "Active site", "Binding site", "Site", "DNA binding", "Nucleotide binding",
+                "Metal binding", "Calcium binding",
+            },
+            empty="Functional or active-site residues are not annotated in this entry.",
+        ),
+        _text_comment_section(
+            "Function annotation",
+            comments,
+            {"FUNCTION"},
+            empty="A free-text function comment is not annotated in this entry.",
+        ),
+        _catalytic_section(comments),
+        _ppi_section(record.get("protein_interactions") or [], cross_references),
+        _variant_section(record, features),
+    ])
+    absorption = record.get("absorption")
     if absorption:
         maximum = absorption.get("max_nm")
         notes = "; ".join(absorption.get("note") or [])
-        absorption_text = html.escape(
+        absorption_text = (
             f"Annotated absorption maximum: {maximum} nm" if maximum is not None
-            else "Absorption annotated (no maximum reported)"
+            else "Absorption annotated (no maximum returned)"
         )
         if notes:
-            absorption_text += ". " + html.escape(notes)
-        evidence = ", ".join(
-            " ".join(str(item[key]) for key in ("code", "source", "id") if item.get(key))
-            for item in absorption.get("evidence") or []
-        )
+            absorption_text += ". " + notes
+        evidence = _evidence_label(absorption.get("evidence"))
         if evidence:
-            absorption_text += " (evidence: " + html.escape(evidence) + ")"
-        annotations += f"<p>{absorption_text}</p>"
+            absorption_text += " (evidence: " + evidence + ")"
+        annotation_sections += (
+            "<h3>Other biophysical annotations</h3><p>"
+            + html.escape(absorption_text)
+            + "</p>"
+        )
     else:
-        annotations += "<p>Absorption is not annotated in this entry.</p>"
+        annotation_sections += (
+            "<h3>Other biophysical annotations</h3>"
+            "<p>Absorption is not annotated in this UniProt entry.</p>"
+        )
+    annotation_sections += (
+        "<p><small>Residue-level features are displayed selectively by category; "
+        "the full normalized feature list is retained in report.json.</small></p>"
+    )
     url = html.escape(record["source_url"], quote=True)
     identity = html.escape(
         f"{record['accession']} · {record['organism'] or 'organism not provided'} "
@@ -160,12 +606,27 @@ def _uniprot_section(record: dict) -> str:
             + html.escape(", ".join(comment_types))
             + ". Full fetched fields are included in report.json.</p>"
         )
+    if record.get("identity_basis") == "supplied_accession":
+        identity_statement = (
+            f"<p>Supplied accession resolved to: <a href=\"{url}\">{identity}</a> "
+            f"(retrieved {date}). Calculations and positions use its canonical sequence.</p>"
+        )
+    else:
+        identity_statement = (
+            f"<p>Canonical sequence matched exactly: <a href=\"{url}\">{identity}</a> "
+            f"(retrieved {date}). Positions refer to that canonical sequence.</p>"
+        )
+    if record.get("input_note"):
+        identity_statement += (
+            "<p><strong>Input note:</strong> "
+            + html.escape(str(record["input_note"]))
+            + "</p>"
+        )
     return (
         "<h2>UniProt annotations</h2>"
-        f"<p>Canonical sequence matched exactly: <a href=\"{url}\">{identity}</a> "
-        f"(retrieved {date}). Positions refer to that canonical sequence.</p>"
+        + identity_statement
         + identity_details
-        + annotations
+        + annotation_sections
     )
 
 
@@ -309,33 +770,75 @@ sequence-only flag does not establish actual expression or solubility.</p></deta
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>
 <div class="note"><strong>What this report cannot tell you:</strong> These are sequence-derived
-estimates, not measurements. A UniProt entry is shown only when its canonical sequence
-matches exactly; a match does not prove an experimental structure or expression outcome.
+estimates, not measurements. A UniProt entry is shown after resolving a supplied accession
+or verifying an exact sequence match; neither establishes an expression outcome.
 A missing annotation or prediction is not evidence that a property is absent.</div></body></html>
 """
 
 
-def generate_report(input_path: Path, output_dir: Path, *, accession: str = "") -> Path:
-    if input_path.stat().st_size > MAX_INPUT_BYTES:
-        raise SequenceError("input exceeds the 100 KB limit")
-    header, sequence = parse_sequence(input_path.read_text(encoding="utf-8"))
+def generate_report(
+    input_path: Path | None, output_dir: Path, *, accession: str = ""
+) -> Path:
+    raw_input = ""
+    if input_path is not None:
+        if input_path.stat().st_size > MAX_INPUT_BYTES:
+            raise SequenceError("input exceeds the 100 KB limit")
+        raw_input = input_path.read_text(encoding="utf-8")
+
+    accession = accession.strip().upper()
+    if accession:
+        uniprot = fetch_annotations("", accession, accession_precedence=True)
+        if uniprot.get("status") != "verified":
+            raise SequenceError(
+                "the supplied UniProt accession could not provide a canonical sequence: "
+                + str(uniprot.get("reason") or uniprot.get("status"))
+            )
+        sequence = str(uniprot.pop("canonical_sequence"))
+        header = f"UniProt {uniprot['accession']} canonical sequence"
+        input_source = "canonical sequence retrieved from the supplied UniProt accession"
+        if raw_input.strip():
+            try:
+                submitted_header, submitted_sequence = parse_sequence(raw_input)
+            except SequenceError:
+                uniprot["submitted_sequence_match"] = None
+                uniprot["input_note"] = (
+                    "The submitted sequence could not be parsed; accession precedence was "
+                    "applied and calculations use the UniProt canonical sequence."
+                )
+                input_source += "; unparseable submitted sequence was not analysed"
+            else:
+                matches = submitted_sequence == sequence
+                uniprot["submitted_sequence_match"] = matches
+                if matches:
+                    header = submitted_header
+                    input_source += "; submitted sequence matched exactly"
+                else:
+                    uniprot["input_note"] = (
+                        "The submitted sequence differed from the supplied accession; accession "
+                        "precedence was applied and calculations use the UniProt canonical sequence."
+                    )
+                    input_source += "; differing submitted sequence was not analysed"
+    else:
+        if not raw_input.strip():
+            raise SequenceError("provide either a protein sequence or a UniProt accession")
+        header, sequence = parse_sequence(raw_input)
+        uniprot = find_sequence_annotations(sequence)
+        input_source = "user-supplied sequence; exact UniProt identity assessed separately"
+
     output_dir.mkdir(parents=True, exist_ok=True)
     data = compute_properties(sequence, header=header).as_dict()
-    data["input_source"] = "user-supplied sequence; UniProt identity is assessed separately"
+    data["input_source"] = input_source
     data["generated_at_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
     plot_hydropathy(sequence, label=header, out_path=output_dir / "hydropathy.png")
     data["disorder_prediction"] = predict_disorder(sequence, output_dir / "disorder.png")
     data["chromophore_candidates"] = chromophore_candidates(sequence)
-    data["uniprot"] = (
-        fetch_annotations(sequence, accession) if accession.strip()
-        else find_sequence_annotations(sequence)
-    )
+    data["uniprot"] = uniprot
     data["pdbe"] = (
         fetch_pdbe_structures(data["uniprot"]["accession"])
         if data["uniprot"]["status"] == "verified"
         else {
             "status": "not_requested",
-            "reason": "A sequence-verified UniProt accession is required before PDBe lookup.",
+            "reason": "A verified UniProt accession is required before PDBe lookup.",
         }
     )
     (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -345,10 +848,16 @@ def generate_report(input_path: Path, output_dir: Path, *, accession: str = "") 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create an offline report from one protein sequence")
-    parser.add_argument("--input", type=Path, required=True, help="single FASTA record or bare sequence")
+    parser = argparse.ArgumentParser(
+        description="Create a report from a protein sequence or UniProt accession"
+    )
+    parser.add_argument("--input", type=Path, help="optional single FASTA record or bare sequence")
     parser.add_argument("--output", type=Path, required=True, help="report directory")
-    parser.add_argument("--accession", default="", help="optional UniProt accession; otherwise search exact sequence in UniParc")
+    parser.add_argument(
+        "--accession",
+        default="",
+        help="UniProt accession; takes precedence over --input when both are supplied",
+    )
     args = parser.parse_args()
     try:
         report = generate_report(args.input, args.output, accession=args.accession)
