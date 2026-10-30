@@ -45,27 +45,25 @@ def respond(start_response, code, body, content_type="text/html; charset=utf-8",
 def page(prefix, csrf, message=""):
     prefix = html.escape(prefix, quote=True)
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Protein Sequence Report</title>
-<style>body{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}
-textarea{width:100%%;box-sizing:border-box}button{padding:.6rem 1rem}</style></head><body>
-<h1>Protein Sequence Report</h1><p>Supply a UniProt accession, one FASTA record, or a bare
-protein sequence (up to 10,000 standard amino acids). An accession takes precedence when
-both are supplied. Without one, the sequence is matched exactly to UniProt. A verified
-accession is used to retrieve experimental structure mappings from PDBe. No PBS submission
-is made.</p>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Protein report</title>
+<style>
+:root{color-scheme:light;--ink:#172033;--muted:#64748b;--line:#dbe4ee;--brand:#155e75;--brand2:#0e7490}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:3rem 1rem;font:1rem/1.55 system-ui,-apple-system,sans-serif;color:var(--ink);background:linear-gradient(145deg,#eef7f8,#f8fafc 48%%,#eef2ff)}
+.shell{width:min(760px,100%%);margin:auto}.hero{margin:0 0 1.5rem}.eyebrow{margin:0 0 .4rem;color:var(--brand2);font-size:.78rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:clamp(2rem,7vw,3.4rem);line-height:1.05;letter-spacing:-.04em}.subtitle{margin:.8rem 0 0;color:var(--muted);font-size:1.1rem}
+.panel{padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.9);box-shadow:0 24px 70px rgba(30,64,175,.12);backdrop-filter:blur(12px)}form{display:grid;gap:1.25rem}.field{display:grid;gap:.45rem}label{font-weight:700}.hint{color:var(--muted);font-size:.88rem}input,textarea{width:100%%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;padding:.8rem .9rem;transition:border-color .15s,box-shadow .15s}textarea{min-height:13rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9rem}input:focus,textarea:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 4px rgba(8,145,178,.13)}button{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(14,116,144,.22)}button:hover{filter:brightness(1.06)}[role=alert]{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}
+</style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
-<label for="sequence">Sequence (optional if accession supplied)</label><br><textarea id="sequence" name="sequence" rows="12"
-maxlength="100000"></textarea><br>
-<label for="accession">UniProt accession (optional; takes precedence)</label><br>
-<input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"><br>
+<div class="field"><label for="accession">UniProt accession</label><span class="hint">Recommended when you know it.</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
+<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA and bare sequences are accepted.</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Generate report</button>
-</form></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
+</form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
 
 
 def chat_page(prefix, token, csrf, history=(), message=""):
     action = "%s/results/%s/chat" % (html.escape(prefix, quote=True), token)
     turns = "".join(
-        "<section><h2>%s</h2><p>%s</p></section>" % (
+        "<section class=\"turn %s\"><h2>%s</h2><p>%s</p></section>" % (
+            "user" if item.get("role") == "user" else "assistant",
             "You" if item.get("role") == "user" else "Report assistant",
             html.escape(str(item.get("content") or "")),
         )
@@ -74,15 +72,12 @@ def chat_page(prefix, token, csrf, history=(), message=""):
     )
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ask about this report</title>
-<style>body{font:1rem/1.5 system-ui;max-width:800px;margin:2rem auto;padding:1rem}
-textarea{width:100%%;box-sizing:border-box}.assistant{background:#eef2f7;padding:1rem}</style></head><body>
-<h1>Ask about this report</h1><p>This assistant can read only this generated report. It cannot
-perform fresh UniProt or PDBe retrieval. Every answer re-reads report data through a required tool.</p>
-<p><a href="%s/results/%s/report.html">Back to report</a></p>%s%s
-<form method="post" action="%s"><input type="hidden" name="csrf" value="%s">
-<label for="question">Question</label><br><textarea id="question" name="question" rows="4"
-maxlength="4000" required></textarea><br><button type="submit">Ask report assistant</button>
-</form></body></html>""" % (
+<style>:root{--ink:#172033;--muted:#64748b;--line:#dbe4ee;--brand:#0e7490}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:2.5rem 1rem;font:1rem/1.55 system-ui;color:var(--ink);background:#f1f6f8}.shell{max-width:820px;margin:auto}a{color:var(--brand)}header{margin-bottom:1.5rem}h1{margin:.4rem 0;font-size:clamp(2rem,6vw,3rem);letter-spacing:-.035em}header p{color:var(--muted)}.turn{margin:1rem 0;padding:1rem 1.2rem;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 8px 25px rgba(15,23,42,.05)}.turn.user{margin-left:12%%;background:#e6f5f7}.turn h2{margin:0 0 .35rem;font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;color:var(--brand)}.turn p{margin:0;white-space:pre-wrap}.composer{margin-top:1.5rem;padding:1.2rem;border-radius:18px;background:white;box-shadow:0 12px 35px rgba(15,23,42,.08)}label{display:block;margin-bottom:.4rem;font-weight:700}textarea{width:100%%;box-sizing:border-box;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:.8rem;font:inherit}textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 4px rgba(14,116,144,.12)}button{margin-top:.75rem;border:0;border-radius:999px;padding:.7rem 1.1rem;background:var(--brand);color:white;font:inherit;font-weight:700;cursor:pointer}</style></head><body><div class="shell">
+<header><a href="%s/results/%s/report.html">← Back to report</a><h1>Ask about this report</h1><p>Answers are restricted to facts recorded in this report.</p></header>%s%s
+<form class="composer" method="post" action="%s"><input type="hidden" name="csrf" value="%s">
+<label for="question">Your question</label><textarea id="question" name="question" rows="4"
+maxlength="4000" required placeholder="What are the main findings?"></textarea><button type="submit">Ask report assistant</button>
+</form></div></body></html>""" % (
         html.escape(prefix, quote=True), token, message, turns, action,
         html.escape(csrf, quote=True),
     )
@@ -322,9 +317,9 @@ def application(environ, start_response):
                 body = result.read_bytes()
                 if parts[3] == "report.html":
                     link = (
-                        b'<div class="note"><h2>Ask about this report</h2>'
+                        b'<div class="report-shell"><div class="note"><h2>Ask about this report</h2>'
                         b'<p><a href="chat">Open the report-only assistant</a>. It can explain '
-                        b'this report but cannot perform fresh database retrieval.</p></div>'
+                        b'this report but cannot perform fresh database retrieval.</p></div></div>'
                     )
                     body = body.replace(b"</body>", link + b"</body>")
                 return respond(start_response, "200 OK", body, FILES[parts[3]])

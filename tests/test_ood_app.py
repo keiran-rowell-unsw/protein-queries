@@ -58,6 +58,8 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     form = request("GET", "/")
     assert form["status"] == "200 OK"
     assert b"/pun/dev/protein-queries/run" in form["body"]
+    assert b"Supply a UniProt accession" not in form["body"]
+    assert b"Turn a protein identifier or sequence" in form["body"]
     cookie = form["headers"]["Set-Cookie"]
     token = cookie.split(";", 1)[0].split("=", 1)[1]
     params = {"csrf": token, "sequence": ">example\nACDEFGHIKLMNPQRSTVWY"}
@@ -67,7 +69,7 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     assert url.startswith("/pun/dev/protein-queries/results/")
     report = request("GET", url.removeprefix("/pun/dev/protein-queries"))
     assert report["status"] == "200 OK"
-    assert b"Sequence analysis report" in report["body"]
+    assert b"Protein analysis report" in report["body"]
     assert b"Open the report-only assistant" in report["body"]
     image = request(
         "GET", url.removeprefix("/pun/dev/protein-queries").replace("report.html", "disorder.png")
@@ -111,7 +113,7 @@ def test_report_chat_page_and_grounded_turn(monkeypatch, tmp_path):
 
     chat = request("GET", f"/results/{token}/chat")
     assert chat["status"] == "200 OK"
-    assert b"read only this generated report" in chat["body"]
+    assert b"Answers are restricted to facts recorded in this report" in chat["body"]
     cookie = chat["headers"]["Set-Cookie"]
     csrf = cookie.split(";", 1)[0].split("=", 1)[1]
     payload = urlencode({"csrf": csrf, "question": "How long is it?"}).encode()

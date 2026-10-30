@@ -150,7 +150,7 @@ def test_local_web_submission(tmp_path):
                     base + "/run", data=urlencode({"sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode()
                 )
             ) as response:
-                assert "Sequence analysis report" in response.read().decode()
+                assert "Protein analysis report" in response.read().decode()
                 assert response.url.startswith(base + "/results/")
             with pytest.raises(HTTPError) as error:
                 urlopen(base + "/results/" + "a" * 32 + "/../../input.fasta")

@@ -736,16 +736,11 @@ def render_html(data: dict, *, generated_at: str) -> str:
     expression_flag = "higher" if expression["class"] == "likely_insoluble" else "lower"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sequence analysis report</title><style>
-body{{font:1rem/1.5 system-ui,sans-serif;max-width:850px;margin:2rem auto;padding:0 1rem;color:#17243a}}
-h1,h2{{line-height:1.2}}table{{border-collapse:collapse;width:100%;margin-bottom:2rem}}
-th,td{{padding:.45rem;border-bottom:1px solid #ccd;text-align:left;vertical-align:top}}
-th{{width:48%}}img{{max-width:100%;height:auto}}.note{{background:#eef2f7;padding:1rem}}
-details{{margin:1rem 0;padding:.5rem;border:1px solid #ccd}}summary{{cursor:pointer;font-weight:600}}
-a{{color:#0057b8}}
-</style></head><body><h1>Sequence analysis report</h1>
-<p><strong>Your sequence:</strong> {html.escape(data['header'])} · {data['length_residues']} residues</p>
-<p>Report created {html.escape(generated_at)} UTC. <a href="../../">Analyse another sequence</a></p>
+<title>Protein analysis report</title><style>
+:root{{--ink:#172033;--muted:#64748b;--line:#dbe4ee;--brand:#0e7490;--surface:#fff}}*{{box-sizing:border-box}}html{{scroll-behavior:smooth}}body{{margin:0;font:1rem/1.58 system-ui,-apple-system,sans-serif;color:var(--ink);background:#f4f7f9}}.report-shell{{width:min(920px,calc(100% - 2rem));margin-inline:auto}}.report-header{{padding:3.2rem 0 2.3rem;color:white;background:linear-gradient(135deg,#164e63,#0e7490 58%,#2563eb)}}.report-header h1{{margin:0 0 .65rem;font-size:clamp(2rem,7vw,3.5rem);line-height:1.05;letter-spacing:-.045em}}.report-header p{{margin:.3rem 0;color:#e6f7fb}}.report-header a{{color:white}}main{{padding-block:2rem 4rem}}h2{{margin:2.6rem 0 .8rem;font-size:1.45rem;line-height:1.2;letter-spacing:-.02em}}p{{max-width:76ch}}table{{display:table;width:100%;margin:0 0 1.5rem;border-collapse:separate;border-spacing:0;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:0 7px 24px rgba(15,23,42,.045)}}th,td{{padding:.7rem .85rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}tr:last-child th,tr:last-child td{{border-bottom:0}}th{{width:42%;color:#334155;font-weight:650}}img{{display:block;max-width:100%;height:auto;padding:.5rem;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 12px 32px rgba(15,23,42,.07)}}.note{{margin:2rem 0;padding:1rem 1.2rem;border-left:4px solid var(--brand);border-radius:0 12px 12px 0;background:#e8f5f7}}details{{margin:1rem 0;border:1px solid var(--line);border-radius:14px;background:white;box-shadow:0 5px 18px rgba(15,23,42,.035)}}summary{{cursor:pointer;padding:1rem 1.1rem;font-weight:700}}details>p,details>table{{margin-left:1.1rem;margin-right:1.1rem;width:calc(100% - 2.2rem)}}a{{color:#0369a1;text-underline-offset:.16em}}a:hover{{text-decoration-thickness:2px}}@media(max-width:600px){{.report-header{{padding-top:2.2rem}}th,td{{display:block;width:100%}}th{{padding-bottom:.2rem;border-bottom:0}}td{{padding-top:.2rem}}tr:last-child th{{border-bottom:0}}}}
+</style></head><body><header class="report-header"><div class="report-shell"><h1>Protein analysis report</h1>
+<p><strong>Analysed protein:</strong> {html.escape(data['header'])} · {data['length_residues']} residues</p>
+<p>Created {html.escape(generated_at)} UTC · <a href="../../">Analyse another protein</a></p></div></header><main class="report-shell">
 <h2>At a glance</h2><table>{''.join(rows)}</table>
 <h2>Hydropathy along the sequence</h2>
 <p>Positive values are more hydrophobic; negative values are more hydrophilic.</p>
@@ -772,7 +767,7 @@ composition statistics, disorder scores (if available), and calculation details.
 <div class="note"><strong>What this report cannot tell you:</strong> These are sequence-derived
 estimates, not measurements. A UniProt entry is shown after resolving a supplied accession
 or verifying an exact sequence match; neither establishes an expression outcome.
-A missing annotation or prediction is not evidence that a property is absent.</div></body></html>
+A missing annotation or prediction is not evidence that a property is absent.</div></main></body></html>
 """
 
 

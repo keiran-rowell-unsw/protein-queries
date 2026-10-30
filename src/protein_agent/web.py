@@ -21,17 +21,11 @@ from .report import MAX_INPUT_BYTES, generate_report
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Protein report</title>
-<style>body{{font:1rem/1.5 system-ui;max-width:720px;margin:2rem auto;padding:1rem}}
-textarea{{width:100%;box-sizing:border-box}}button{{padding:.6rem 1rem}}</style></head><body>
-<h1>Protein sequence report</h1><p>Runs locally on this node. Supply a UniProt accession,
-one FASTA record, or a bare sequence (up to 10,000 standard amino acids). The accession
-takes precedence when both are supplied. Without one, an exact sequence match is sought in
-UniProt. A verified accession is used to retrieve ranked structure mappings from PDBe.</p>
-{message}<form method="post" action="/run"><label for="sequence">Protein sequence (optional if accession supplied)</label><br>
-<textarea id="sequence" name="sequence" rows="12" maxlength="100000"></textarea><br>
-<label for="accession">UniProt accession (optional; takes precedence over sequence)</label><br>
-<input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{{6,10}}(-[0-9]{{1,2}})?" placeholder="e.g. P04637 or P04637-1" inputmode="text" autocomplete="off" spellcheck="false"><br>
-<button type="submit">Generate report</button></form></body></html>"""
+<style>:root{{--ink:#172033;--muted:#64748b;--line:#dbe4ee;--brand:#0e7490}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;padding:3rem 1rem;font:1rem/1.55 system-ui;color:var(--ink);background:linear-gradient(145deg,#eef7f8,#f8fafc 48%,#eef2ff)}}.shell{{max-width:760px;margin:auto}}h1{{margin:0;font-size:clamp(2rem,7vw,3.4rem);letter-spacing:-.04em}}.subtitle,.hint{{color:var(--muted)}}.panel{{margin-top:1.5rem;padding:clamp(1.25rem,4vw,2.2rem);border-radius:22px;background:#fffffff0;box-shadow:0 24px 70px #1e40af1f}}form{{display:grid;gap:1.25rem}}.field{{display:grid;gap:.45rem}}label{{font-weight:700}}.hint{{font-size:.88rem}}input,textarea{{width:100%;border:1px solid var(--line);border-radius:12px;padding:.8rem .9rem;background:white;color:var(--ink);font:inherit}}textarea{{min-height:13rem;resize:vertical;font-family:ui-monospace,monospace}}input:focus,textarea:focus{{outline:none;border-color:var(--brand);box-shadow:0 0 0 4px #0e74901f}}button{{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:var(--brand);color:white;font:inherit;font-weight:750;cursor:pointer}}[role=alert]{{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}}</style></head><body><div class="shell">
+<header><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
+{message}<form method="post" action="/run"><div class="field"><label for="accession">UniProt accession</label><span class="hint">Recommended when you know it.</span><input id="accession" name="accession" maxlength="13" pattern="[A-Za-z0-9]{{6,10}}(-[0-9]{{1,2}})?" placeholder="e.g. P05067" inputmode="text" autocomplete="off" spellcheck="false"></div>
+<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA and bare sequences are accepted.</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
+<button type="submit">Generate report</button></form></main></div></body></html>"""
 
 
 def make_handler(output_root: Path) -> type[BaseHTTPRequestHandler]:
