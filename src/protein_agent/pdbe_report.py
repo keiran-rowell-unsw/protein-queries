@@ -60,7 +60,30 @@ def fetch_pdbe_structures(
         ]
         if not text_items:
             return {"status": "not_found", "reason": "PDBe returned no mapped structures."}
-        payload = json.loads(text_items[0])
+        response_text = text_items[0]
+        if response_text.startswith("API request failed:"):
+            if "404" in response_text or "does not contain any data" in response_text:
+                return {
+                    "status": "not_found",
+                    "reason": (
+                        "No experimental structures were found in PDBe under this "
+                        "UniProt accession."
+                    ),
+                }
+            status = next(
+                (line for line in response_text.splitlines() if line.startswith("Status Code:")),
+                "status unavailable",
+            )
+            return {
+                "status": "unavailable",
+                "reason": "The PDBe API request failed (" + status.lower() + ").",
+            }
+        if response_text.startswith("Input validation error:"):
+            return {
+                "status": "unavailable",
+                "reason": "The live PDBe tool rejected the structure lookup request.",
+            }
+        payload = json.loads(response_text)
         records = payload.get(accession) or payload.get(accession.upper()) or []
         if not isinstance(records, list) or not records:
             return {
@@ -105,10 +128,15 @@ def fetch_pdbe_structures(
             "ranking": "PDBe ranked structures mapped to the verified UniProt accession",
             "_provenance": result.get("_provenance"),
         }
-    except (PdbeMcpError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except PdbeMcpError as exc:
         return {
             "status": "unavailable",
-            "reason": f"PDBe structure retrieval was unavailable ({type(exc).__name__}).",
+            "reason": "PDBe structure retrieval was unavailable: " + str(exc),
+        }
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return {
+            "status": "unavailable",
+            "reason": "PDBe returned an unexpected structure-response format.",
         }
     finally:
         if owned:

@@ -7,11 +7,17 @@ answer, or an exception message.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 DEFAULT_BASE_URL = "https://inference.restech.unsw.edu.au/v1"
 DEFAULT_MODEL = "qwen3.8-flash-next"
 DEFAULT_UNIPROT_BASE_URL = "https://rest.uniprot.org"
+_PDBE_SIBLING = Path(sys.executable).with_name("pdbe-mcp-server")
+DEFAULT_PDBE_MCP_COMMAND = (
+    str(_PDBE_SIBLING) if _PDBE_SIBLING.is_file() else "pdbe-mcp-server"
+)
 # Live roster verified with GET /v1/models; the endpoint remains the authority.
 KNOWN_CHAT_MODELS = ("qwen3.8-flash-next", "qwen3.8-27b", "glm-5.3-flash")
 
@@ -32,7 +38,7 @@ class Settings:
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     uniprot_base_url: str = DEFAULT_UNIPROT_BASE_URL
-    pdbe_mcp_command: str = "pdbe-mcp-server"
+    pdbe_mcp_command: str = DEFAULT_PDBE_MCP_COMMAND
     pdbe_mcp_timeout: float = 45.0
     pdbe_mcp_max_result_bytes: int = 262_144
     max_tool_rounds: int = 6
@@ -57,7 +63,9 @@ class Settings:
             uniprot_base_url=os.getenv(
                 "UNIPROT_BASE_URL", DEFAULT_UNIPROT_BASE_URL
             ).rstrip("/"),
-            pdbe_mcp_command=os.getenv("PDBE_MCP_COMMAND", "pdbe-mcp-server"),
+            pdbe_mcp_command=os.getenv(
+                "PDBE_MCP_COMMAND", DEFAULT_PDBE_MCP_COMMAND
+            ),
             pdbe_mcp_timeout=float(os.getenv("PDBE_MCP_TIMEOUT", "45")),
             pdbe_mcp_max_result_bytes=int(
                 os.getenv("PDBE_MCP_MAX_RESULT_BYTES", "262144")

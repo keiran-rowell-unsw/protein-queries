@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -50,6 +52,12 @@ class FakeRunner:
                 ]
             return [_tool("entry_live_hash", "PDB entry summary", {"pdb_id": {}})]
         return {"content": [{"type": "text", "text": "PDB 1ABC"}], "isError": False}
+
+
+def test_default_server_command_is_sibling_of_active_python() -> None:
+    sibling = Path(sys.executable).with_name("pdbe-mcp-server")
+    if sibling.is_file():
+        assert Path(Settings().pdbe_mcp_command) == sibling
 
 
 def test_discovery_preserves_server_schemas_and_routes_calls() -> None:

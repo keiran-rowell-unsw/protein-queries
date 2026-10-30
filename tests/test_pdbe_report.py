@@ -2,6 +2,7 @@
 
 import json
 
+from protein_agent.pdbe_mcp import PdbeMcpError
 from protein_agent.pdbe_report import fetch_pdbe_structures
 from protein_agent.report import _pdbe_section
 
@@ -55,6 +56,35 @@ def test_verified_pdbe_mapping_is_bounded_and_rendered() -> None:
     assert "1.8 Å" in page
     assert "75% coverage" in page
     assert "https://www.ebi.ac.uk/pdbe/entry/pdb/1abc" in page
+
+
+def test_pdbe_failure_reason_is_actionable() -> None:
+    class Broken(FakePdbe):
+        def tool_schemas(self):
+            raise PdbeMcpError("server executable was not found")
+
+    record = fetch_pdbe_structures("Q12345", client=Broken())
+    assert record["status"] == "unavailable"
+    assert "server executable was not found" in record["reason"]
+
+
+def test_pdbe_wrapped_404_is_a_bounded_no_match() -> None:
+    class NoData(FakePdbe):
+        def call(self, name, arguments):
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": (
+                        "API request failed: 404 Client Error\nStatus Code: 404\n"
+                        'Response: {"message":"Requested endpoint does not contain any data"}'
+                    ),
+                }],
+                "isError": False,
+            }
+
+    record = fetch_pdbe_structures("Q12345", client=NoData())
+    assert record["status"] == "not_found"
+    assert "under this UniProt accession" in record["reason"]
 
 
 def test_pdbe_empty_mapping_is_not_reported_as_global_absence() -> None:
