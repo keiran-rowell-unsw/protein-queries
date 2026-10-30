@@ -158,5 +158,13 @@ implemented. Structural questions now lazily start the pinned official PDBe API 
 MCP stdio servers, discover their live tool names and schemas, and route calls
 without hard-coded generated API-tool names. Search fan-out is capped at 25 rows and every
 result records its MCP server, tool, arguments, and retrieval time. The OOD report also
-shows a bounded ranked PDBe mapping after exact UniProt sequence verification. Remaining
+shows a bounded ranked PDBe mapping after resolving a verified UniProt accession. Remaining
 work includes streaming and structured output in the CLI.
+
+Each OOD result page also links to a private **report-only assistant**. Every chat turn is
+forced to call `read_sequence_report`; the assistant can read bounded sections of that
+report and conversation history, but it is not given live UniProt, PDBe, shell, filesystem,
+or web tools. Questions travel to the compute node over SSH stdin rather than shell
+arguments, the ResTech key remains server-side, and chat history is stored in the report's
+private token directory. Missing report data is reported as unavailable rather than filled
+from model memory.

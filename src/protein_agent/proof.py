@@ -206,6 +206,7 @@ def unsupported_claims(
         if asserts_annotation and not (
             evidence.used_tool("fetch_fasta")
             or evidence.used_tool("fetch_uniprot_entry")
+            or evidence.used_tool("read_sequence_report")
             or positions_from_tools
         ):
             problems.append(
@@ -214,7 +215,10 @@ def unsupported_claims(
             )
     # A figure may only be described by the tool that drew it. Without this, a model that
     # has the underlying numbers will happily "describe" a plot it never rendered.
-    if PLOT_LANGUAGE.search(answer) and not evidence.used_tool("plot_hydropathy"):
+    if PLOT_LANGUAGE.search(answer) and not (
+        evidence.used_tool("plot_hydropathy")
+        or evidence.used_tool("read_sequence_report")
+    ):
         problems.append(
             "describes a plot/figure but plot_hydropathy was never called in this run"
         )
@@ -236,6 +240,10 @@ def unsupported_claims(
                 provenance.get("source") == "PDBe MCP"
                 and provenance.get("server") == "pdbe_api_server"
                 and payload.get("isError") is not True
+            ) or (
+                evidence.used_tool("read_sequence_report")
+                and '"source": "PDBe MCP"' in raw_result
+                and '"status": "verified"' in raw_result
             ):
                 has_pdbe_api_result = True
                 break
