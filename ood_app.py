@@ -25,6 +25,8 @@ ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
 MAX_CHAT_MESSAGES = 12
+# Temporarily disabled while the retrieval interface is being expanded.
+REPORT_ASSISTANT_ENABLED = False
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
          "hydropathy.png": "image/png", "disorder.png": "image/png",
@@ -162,7 +164,7 @@ def run_report(sequence, folder, accession=""):
     source.write_text(sequence, encoding="utf-8")
     try:
         args = [PROJECT + "/.venv/bin/python", "-m", "protein_agent.report",
-                "--input", str(source), "--output", str(folder)]
+                "--input", str(source), "--output", str(folder), "--foldseek"]
         if accession:
             args.extend(["--accession", accession])
         result = subprocess.run(
@@ -195,6 +197,7 @@ def application(environ, start_response):
         and chat_parts[1] == "results"
         and TOKEN.fullmatch(chat_parts[2])
         and chat_parts[3] == "chat"
+        and REPORT_ASSISTANT_ENABLED
     )
     if method == "GET" and is_chat:
         folder = ROOT / chat_parts[2]
@@ -317,7 +320,7 @@ def application(environ, start_response):
             result = ROOT / parts[2] / parts[3]
             if result.is_file():
                 body = result.read_bytes()
-                if parts[3] == "report.html":
+                if parts[3] == "report.html" and REPORT_ASSISTANT_ENABLED:
                     link = (
                         b'<div class="report-shell"><div class="note"><h2>Ask about this report</h2>'
                         b'<p><a href="chat">Open the report-only assistant</a>. It can explain '

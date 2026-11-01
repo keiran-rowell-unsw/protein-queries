@@ -1,7 +1,8 @@
-"""Offline, deterministic single-sequence report for the local web app.
+"""Single-sequence report for the local web app.
 
 No UniProt identity, structure, expression, or experimental claims are inferred from a
-pasted sequence. This entry point never invokes the inference gateway or requires a key.
+pasted sequence. Foldseek is an optional external search (`--foldseek`) and never a
+replacement for verified identity.
 """
 
 # HTML template is intentionally readable rather than wrapped to Python's line limit.
@@ -15,7 +16,9 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .config import Settings
 from .disorder import predict_disorder
+from .foldseek import FoldseekClient
 from .pdbe_report import fetch_pdbe_structures
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
@@ -692,6 +695,30 @@ def _pdbe_section(record: dict) -> str:
     )
 
 
+def render_foldseek_section(data: dict) -> str:
+    """Show the bounded Foldseek response without treating hits as identity evidence."""
+    record = data.get("foldseek") or {"status": "not_requested"}
+    status = str(record.get("status") or "unknown")
+    if status == "not_requested":
+        return ""
+    payload = record.get("result")
+    readable = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    if status == "complete":
+        lead = (
+            "Foldseek returned a search result. Hits are candidates from the selected "
+            "database, not verified protein identity or experimental truth."
+        )
+    else:
+        lead = "Foldseek did not return a complete search result: " + status + "."
+    return (
+        "<details><summary>Foldseek search</summary>"
+        f"<p>{html.escape(lead)}</p>"
+        f"<p>Database: {html.escape(str(record.get('database') or 'not returned'))}; "
+        f"ticket: {html.escape(str(record.get('ticket') or 'not returned'))}.</p>"
+        f"<pre>{html.escape(readable)}</pre></details>"
+    )
+
+
 def render_html(data: dict, *, generated_at: str) -> str:
     """Render only escaped input/data; never execute arbitrary HTML from a FASTA header."""
     ext = data["molar_extinction_coefficient_M-1cm-1"]
@@ -788,6 +815,7 @@ sequence-only flag does not establish actual expression or solubility.</p></deta
 {_uniprot_section(data['uniprot'])}
 {render_structure_section(data)}
 {_pdbe_section(data['pdbe'])}
+{render_foldseek_section(data)}
 <details><summary>Predicted PTM motifs</summary>{render_motif_section(data)}</details>
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
@@ -800,7 +828,11 @@ A missing annotation or prediction is not evidence that a property is absent.</d
 
 
 def generate_report(
-    input_path: Path | None, output_dir: Path, *, accession: str = ""
+    input_path: Path | None,
+    output_dir: Path,
+    *,
+    accession: str = "",
+    run_foldseek: bool = False,
 ) -> Path:
     raw_input = ""
     if input_path is not None:
@@ -864,6 +896,24 @@ def generate_report(
             "reason": "A verified UniProt accession is required before PDBe lookup.",
         }
     )
+    if run_foldseek:
+        foldseek_settings = Settings.from_env(require_key=False)
+        # Keep the OOD SSH request bounded even when the public queue is busy.
+        foldseek_settings.request_timeout = min(foldseek_settings.request_timeout, 75.0)
+        foldseek = FoldseekClient(foldseek_settings)
+        try:
+            data["foldseek"] = foldseek.search(
+                f">{header}\n{sequence}", database="pdb100"
+            )
+        except Exception as exc:  # report the bounded service failure, never fail the report
+            data["foldseek"] = {
+                "status": "unavailable",
+                "reason": "Foldseek search could not be completed: " + str(exc),
+            }
+        finally:
+            foldseek.close()
+    else:
+        data["foldseek"] = {"status": "not_requested"}
     # Motifs and the position map are derived from the analysed sequence, plus the feature
     # list already fetched above; the structure section ranks the PDBe mappings already held.
     data["predicted_motifs"] = build_motifs(sequence, uniprot)
@@ -888,9 +938,16 @@ def main() -> int:
         default="",
         help="UniProt accession; takes precedence over --input when both are supplied",
     )
+    parser.add_argument(
+        "--foldseek",
+        action="store_true",
+        help="run the submitted sequence through the public Foldseek search API",
+    )
     args = parser.parse_args()
     try:
-        report = generate_report(args.input, args.output, accession=args.accession)
+        report = generate_report(
+            args.input, args.output, accession=args.accession, run_foldseek=args.foldseek
+        )
     except (SequenceError, OSError, UnicodeError, ValueError) as exc:
         print(f"Report not generated: {exc}", file=sys.stderr)
         return 2

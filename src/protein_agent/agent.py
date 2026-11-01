@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
+from .foldseek import FoldseekClient
 from .gateway import ChatResponse, ResTechGateway
 from .prompts import build_system_prompt
 from .proof import AnswerProofError, Evidence, prove_answer
@@ -39,6 +40,7 @@ class ProteinAgent:
         gateway: ResTechGateway | None = None,
         uniprot: UniProtClient | None = None,
         pdbe: PdbeClient | None = None,
+        foldseek: FoldseekClient | None = None,
         pdbe_tools: list[dict[str, Any]] | None = None,
     ) -> None:
         self.settings = settings
@@ -47,6 +49,7 @@ class ProteinAgent:
         # PDBe starts lazily only for structural questions; discovery launches the official
         # API and Search MCP stdio servers and would be wasteful for UniProt-only requests.
         self.pdbe = pdbe
+        self.foldseek = foldseek or FoldseekClient(settings)
         self._pdbe_tools = pdbe_tools
         self.tools = all_tools(pdbe_tools=pdbe_tools)
         # Accessions the assistant itself verified in a prior turn and may reuse. Anything
@@ -134,7 +137,13 @@ class ProteinAgent:
                         continue
                     seen_calls[key] = 1
                     evidence.add_call(name, arguments)
-                    result = dispatch(name, arguments, uniprot=self.uniprot, pdbe=self.pdbe)
+                    result = dispatch(
+                        name,
+                        arguments,
+                        uniprot=self.uniprot,
+                        pdbe=self.pdbe,
+                        foldseek=self.foldseek,
+                    )
                     evidence.add_result(json.dumps(result, ensure_ascii=False))
                     messages.append(
                         {

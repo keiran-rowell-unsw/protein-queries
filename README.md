@@ -161,10 +161,8 @@ result records its MCP server, tool, arguments, and retrieval time. The OOD repo
 shows a bounded ranked PDBe mapping after resolving a verified UniProt accession. Remaining
 work includes streaming and structured output in the CLI.
 
-Each OOD result page also links to a private **report-only assistant**. Every chat turn is
-forced to call `read_sequence_report`; the assistant can read bounded sections of that
-report and conversation history, but it is not given live UniProt, PDBe, shell, filesystem,
-or web tools. Questions travel to the compute node over SSH stdin rather than shell
-arguments, the ResTech key remains server-side, and chat history is stored in the report's
-private token directory. Missing report data is reported as unavailable rather than filled
-from model memory.
+The OOD report-only assistant is temporarily disabled. OOD report generation also submits
+its analysed sequence to the public Foldseek search API (`pdb100`) and adds the bounded
+candidate result to `report.json` and a collapsed **Foldseek search** section in the HTML.
+Foldseek failures do not invalidate the rest of the report; hits remain search candidates,
+not verified identity. The CLI supports the same opt-in path with `--foldseek`.

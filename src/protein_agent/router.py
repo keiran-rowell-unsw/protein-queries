@@ -17,6 +17,7 @@ from .tools import (
     COMPUTE_PROPERTIES,
     FETCH_ENTRY,
     FETCH_FASTA,
+    FOLDSEEK_SEARCH,
     PLOT_HYDROPATHY,
     SEARCH_UNIPROT,
     UNIPROT_TOOLS,
@@ -42,6 +43,8 @@ SEQUENCE_HINTS = re.compile(
     r"mass|mw|start codon)\w*\b",
     re.IGNORECASE,
 )
+FOLDSEEK_HINTS = re.compile(r"\bfoldseek\b", re.IGNORECASE)
+
 ANNOTATION_HINTS = re.compile(
     r"\b(function|locat\w+|subcellular|pathway|disease|interact\w+|annotation|activity|"
     r"ptm|modification|binding site|go term|taxonomy|organism|gene name|reviewed)\w*\b",
@@ -75,10 +78,14 @@ def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None)
     reasons: list[str] = []
 
     is_sequence_query = bool(re.search(r"[ACDEFGHIKLMNPQRSTVWY]{20,}", question.upper()))
+    wants_foldseek = bool(FOLDSEEK_HINTS.search(question))
     if is_sequence_query and not ACCESSION_RE.search(question):
         # The subject is the sequence itself. It must not be attached to an accession, so
         # the entry/fasta tools are withheld rather than merely discouraged.
         names.update({COMPUTE_PROPERTIES, CHROMOPHORE})
+        if wants_foldseek:
+            names.add(FOLDSEEK_SEARCH)
+            services.append("foldseek")
         services.append("local-compute")
         reasons.append(
             "sequence pasted: identity is unresolved from sequence alone, so answer only "
@@ -130,6 +137,11 @@ def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None)
             reasons.append("PDBe MCP tools must be discovered before structural retrieval")
         else:
             reasons.append("PDBe API/Search MCP tools were discovered live")
+
+    if wants_foldseek:
+        names.add(FOLDSEEK_SEARCH)
+        services.append("foldseek")
+        reasons.append("Foldseek search explicitly requested")
 
     if ANNOTATION_HINTS.search(question):
         reasons.append("annotation fields must be read from the entry payload")

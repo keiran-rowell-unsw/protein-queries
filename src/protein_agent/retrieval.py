@@ -20,6 +20,7 @@ from .tools import (
     COMPUTE_PROPERTIES,
     FETCH_ENTRY,
     FETCH_FASTA,
+    FOLDSEEK_SEARCH,
     PLOT_HYDROPATHY,
     SEARCH_UNIPROT,
 )
@@ -347,6 +348,7 @@ def dispatch(
     *,
     uniprot: UniProtClient,
     pdbe: PdbeClient | None = None,
+    foldseek: Any | None = None,
 ) -> dict[str, Any]:
     """Execute one tool call and return a JSON-serialisable result (or a limitation note)."""
     try:
@@ -360,6 +362,14 @@ def dispatch(
             return uniprot.entry(arguments["accession"])
         if name == FETCH_FASTA:
             return uniprot.fasta(arguments["accession"])
+        if name == FOLDSEEK_SEARCH:
+            if foldseek is None:
+                raise RetrievalError("Foldseek client is not configured.")
+            return foldseek.search(
+                arguments["query"],
+                database=arguments.get("database") or "pdb100",
+                mode=arguments.get("mode"),
+            )
         if name == PLOT_HYDROPATHY:
             from .plots import plot_hydropathy
 

@@ -15,6 +15,7 @@ FETCH_FASTA = "fetch_fasta"
 COMPUTE_PROPERTIES = "compute_sequence_properties"
 CHROMOPHORE = "find_chromophore_candidates"
 PLOT_HYDROPATHY = "plot_hydropathy"
+FOLDSEEK_SEARCH = "foldseek_search"
 
 _STRING = {"type": "string"}
 
@@ -84,6 +85,22 @@ UNIPROT_TOOLS: list[dict[str, Any]] = [
     ),
 ]
 
+FOLDSEEK_TOOLS: list[dict[str, Any]] = [
+    _fn(
+        FOLDSEEK_SEARCH,
+        "Submit a protein sequence or structure text to the public Foldseek search API, "
+        "poll the job, and return its retrieved matches. Use only when the user explicitly "
+        "requests Foldseek. The query is sent to Foldseek as a file; the returned hits are "
+        "candidates and must not be presented as experimentally verified identity.",
+        {
+            "query": {**_STRING, "description": "Protein FASTA, PDB, or mmCIF query text"},
+            "database": {**_STRING, "description": "Foldseek database name, e.g. pdb100"},
+            "mode": {**_STRING, "description": "Optional Foldseek server mode"},
+        },
+        ["query"],
+    ),
+]
+
 SEQUENCE_TOOLS: list[dict[str, Any]] = [
     _fn(
         COMPUTE_PROPERTIES,
@@ -140,6 +157,7 @@ def all_tools(
     tools = list(UNIPROT_TOOLS)
     if include_sequence:
         tools.extend(SEQUENCE_TOOLS)
+    tools.extend(FOLDSEEK_TOOLS)
     if include_pdbe:
         tools.extend(pdbe_tools or [])
     return tools
@@ -148,6 +166,8 @@ def all_tools(
 __all__ = [
     "FETCH_ENTRY",
     "FETCH_FASTA",
+    "FOLDSEEK_SEARCH",
+    "FOLDSEEK_TOOLS",
     "PLOT_HYDROPATHY",
     "SEARCH_UNIPROT",
     "SEQUENCE_TOOLS",

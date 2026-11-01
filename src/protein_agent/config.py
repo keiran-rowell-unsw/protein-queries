@@ -14,6 +14,7 @@ from pathlib import Path
 DEFAULT_BASE_URL = "https://inference.restech.unsw.edu.au/v1"
 DEFAULT_MODEL = "qwen3.8-flash-next"
 DEFAULT_UNIPROT_BASE_URL = "https://rest.uniprot.org"
+DEFAULT_FOLDSEEK_BASE_URL = "https://search.foldseek.com"
 _PDBE_SIBLING = Path(sys.executable).with_name("pdbe-mcp-server")
 DEFAULT_PDBE_MCP_COMMAND = (
     str(_PDBE_SIBLING) if _PDBE_SIBLING.is_file() else "pdbe-mcp-server"
@@ -38,6 +39,7 @@ class Settings:
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     uniprot_base_url: str = DEFAULT_UNIPROT_BASE_URL
+    foldseek_base_url: str = DEFAULT_FOLDSEEK_BASE_URL
     pdbe_mcp_command: str = DEFAULT_PDBE_MCP_COMMAND
     pdbe_mcp_timeout: float = 45.0
     pdbe_mcp_max_result_bytes: int = 262_144
@@ -62,6 +64,9 @@ class Settings:
             model=os.getenv("RESTECH_MODEL", DEFAULT_MODEL),
             uniprot_base_url=os.getenv(
                 "UNIPROT_BASE_URL", DEFAULT_UNIPROT_BASE_URL
+            ).rstrip("/"),
+            foldseek_base_url=os.getenv(
+                "FOLDSEEK_BASE_URL", DEFAULT_FOLDSEEK_BASE_URL
             ).rstrip("/"),
             pdbe_mcp_command=os.getenv(
                 "PDBE_MCP_COMMAND", DEFAULT_PDBE_MCP_COMMAND
