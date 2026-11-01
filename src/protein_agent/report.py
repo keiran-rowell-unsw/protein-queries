@@ -451,6 +451,17 @@ def _domain_section(features: list[dict], cross_references: list[dict], comments
     return output
 
 
+def _collapsed_annotation(title: str, content: str) -> str:
+    """Keep verbose annotation details available without dominating the report."""
+    return (
+        "<details class='deferred-annotation'><summary>"
+        + html.escape(title)
+        + "</summary>"
+        + content
+        + "</details>"
+    )
+
+
 def _variant_section(record: dict, features: list[dict]) -> str:
     variants = [
         item for item in features
@@ -507,9 +518,24 @@ def _uniprot_section(record: dict) -> str:
     features = record.get("features") or []
     comments = record.get("comments") or []
     cross_references = record.get("cross_references") or []
+    detailed_sections = "".join([
+        _collapsed_annotation("Localisation", _localisation_section(comments, features)),
+        _collapsed_annotation(
+            "Functional / active sites",
+            _feature_section(
+                "Functional / active sites",
+                features,
+                {
+                    "Active site", "Binding site", "Site", "DNA binding", "Nucleotide binding",
+                    "Metal binding", "Calcium binding",
+                },
+                empty="Functional or active-site residues are not annotated in this entry.",
+            ),
+        ),
+        _collapsed_annotation("Variants", _variant_section(record, features)),
+    ])
     annotation_sections = "".join([
         _pdb_section(cross_references, comments),
-        _localisation_section(comments, features),
         _feature_section(
             "Glycosylation sites",
             features,
@@ -538,15 +564,6 @@ def _uniprot_section(record: dict) -> str:
             empty="Subunit organisation or stoichiometry is not annotated in this entry.",
         ),
         _domain_section(features, cross_references, comments),
-        _feature_section(
-            "Functional / active sites",
-            features,
-            {
-                "Active site", "Binding site", "Site", "DNA binding", "Nucleotide binding",
-                "Metal binding", "Calcium binding",
-            },
-            empty="Functional or active-site residues are not annotated in this entry.",
-        ),
         _text_comment_section(
             "Function annotation",
             comments,
@@ -555,7 +572,7 @@ def _uniprot_section(record: dict) -> str:
         ),
         _catalytic_section(comments),
         _ppi_section(record.get("protein_interactions") or [], cross_references),
-        _variant_section(record, features),
+        "<h3>Detailed annotations</h3>" + detailed_sections,
     ])
     absorption = record.get("absorption")
     if absorption:
@@ -756,7 +773,6 @@ def render_html(data: dict, *, generated_at: str) -> str:
 <p><a href="hydropathy.png" download>Download the hydropathy image</a></p>
 {disorder_section}
 {render_position_map_section(data)}
-{render_motif_section(data)}
 <details><summary>Amino-acid composition</summary>
 <p>Counts, share of the sequence, and enrichment relative to a reference composition.</p>
 <table>{composition}</table></details>
@@ -772,6 +788,7 @@ sequence-only flag does not establish actual expression or solubility.</p></deta
 {_uniprot_section(data['uniprot'])}
 {render_structure_section(data)}
 {_pdbe_section(data['pdbe'])}
+<details><summary>Predicted PTM motifs</summary>{render_motif_section(data)}</details>
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>
