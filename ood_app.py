@@ -19,14 +19,18 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
 EXECUTION_MODE = os.environ.get("PROTEIN_REPORT_EXECUTION", "local").strip().lower()
 PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
+UNIPROT_BASE_URL = os.environ.get("UNIPROT_BASE_URL", "https://rest.uniprot.org").rstrip("/")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
@@ -320,6 +324,29 @@ def application(environ, start_response):
     if method == "GET" and path in {"/health", "/__health"}:
         report_python = Path(PROJECT) / ".venv" / "bin" / "python"
         report_check = {"version": None, "protein_agent_import": False, "error": None}
+        uniprot_check = {
+            "url": UNIPROT_BASE_URL,
+            "reachable": False,
+            "status": None,
+            "elapsed_seconds": None,
+            "error": None,
+        }
+        probe = UNIPROT_BASE_URL + "/uniprotkb/search?" + urlencode({
+            "query": "reviewed:true", "size": "1", "format": "json",
+        })
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(probe, timeout=8) as response:
+                uniprot_check.update(
+                    reachable=True,
+                    status=response.status,
+                    elapsed_seconds=round(time.monotonic() - started, 3),
+                )
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            uniprot_check.update(
+                elapsed_seconds=round(time.monotonic() - started, 3),
+                error=str(exc)[:500],
+            )
         if report_python.is_file():
             try:
                 checked = subprocess.run(
@@ -344,6 +371,7 @@ def application(environ, start_response):
             "report_python": str(report_python),
             "report_python_exists": report_python.is_file(),
             "report_python_check": report_check,
+            "uniprot_check": uniprot_check,
             "last_report_error": LAST_REPORT_ERROR,
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
             "extended_python": EXTENDED_PYTHON or None,
