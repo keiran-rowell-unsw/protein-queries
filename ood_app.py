@@ -11,12 +11,14 @@ import fcntl
 import hmac
 import html
 import json
+import logging
 import os
 import re
 import secrets
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -32,6 +34,7 @@ MAX_CHAT_MESSAGES = 12
 MAX_EXTEND_BODY = 2_000
 # Temporarily disabled while the retrieval interface is being expanded.
 REPORT_ASSISTANT_ENABLED = False
+LOGGER = logging.getLogger("protein_queries.ood_app")
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
          "hydropathy.png": "image/png", "disorder.png": "image/png",
@@ -183,12 +186,19 @@ def run_report(sequence, folder, accession=""):
             ]
         result = subprocess.run(
             command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
             timeout=90,
             check=False,
         )
         if result.returncode != 0 or not (folder / "report.html").is_file():
+            LOGGER.error(
+                "report subprocess failed: mode=%s python=%s returncode=%s stderr=%s",
+                EXECUTION_MODE,
+                args[0],
+                result.returncode,
+                (result.stderr or "").strip()[-4_000:],
+            )
             raise RuntimeError("lightweight report subprocess failed; check the Passenger project environment")
     finally:
         source.unlink(missing_ok=True)
@@ -299,6 +309,25 @@ def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/")
     prefix = environ.get("SCRIPT_NAME", "").rstrip("/")
+    if method == "GET" and path in {"/health", "/__health"}:
+        report_python = Path(PROJECT) / ".venv" / "bin" / "python"
+        payload = {
+            "passenger_python": sys.executable,
+            "passenger_python_version": sys.version,
+            "project": PROJECT,
+            "execution_mode": EXECUTION_MODE,
+            "report_python": str(report_python),
+            "report_python_exists": report_python.is_file(),
+            "pbs_submit_command": PBS_SUBMIT_COMMAND,
+            "extended_python": EXTENDED_PYTHON or None,
+            "extended_python_exists": bool(EXTENDED_PYTHON and Path(EXTENDED_PYTHON).is_file()),
+        }
+        return respond(
+            start_response,
+            "200 OK",
+            json.dumps(payload, indent=2),
+            "application/json; charset=utf-8",
+        )
     if method == "GET" and path in ("/", ""):
         csrf = secrets.token_hex(16)
         cookie_path = prefix + "/"
