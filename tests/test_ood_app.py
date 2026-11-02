@@ -90,6 +90,9 @@ def test_every_submission_queues_without_local_report(
     )
     assert pending["status"] == "200 OK"
     assert b"Report queued" in pending["body"]
+    assert b"123.server" in pending["body"]
+    assert b"OOD Active Jobs" in pending["body"]
+    assert b"/pun/sys/dashboard/activejobs" in pending["body"]
     assert b"refresh" in pending["body"]
 
 
@@ -197,6 +200,7 @@ def test_health_is_read_only_and_reports_pbs_only(monkeypatch):
     payload = json.loads(response["body"])
     assert payload["report_execution"] == "pbs_only"
     assert payload["pbs_submit_command_exists"] is True
+    assert payload["active_jobs_url"] == "/pun/sys/dashboard/activejobs"
     assert payload["uniprot"] == "deferred_to_compute_job"
 
 

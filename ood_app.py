@@ -28,6 +28,9 @@ PBS_SUBMIT_COMMAND = (
 )
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
 DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
+OOD_ACTIVE_JOBS_URL = os.environ.get(
+    "OOD_ACTIVE_JOBS_URL", "/pun/sys/dashboard/activejobs"
+)
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
@@ -269,6 +272,10 @@ def pending_page(prefix, token, folder):
     with contextlib.suppress(OSError, ValueError, TypeError):
         job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
     status = str(job.get("status") or "queued")
+    job_id = str(job.get("job_id") or "")
+    if not job_id:
+        with contextlib.suppress(OSError, UnicodeError):
+            job_id = (folder / "job-id.txt").read_text(encoding="utf-8").strip()
     if status in {"failed", "unavailable"}:
         reason = html.escape(str(job.get("reason") or "The compute job did not complete."))
         return (
@@ -278,11 +285,18 @@ def pending_page(prefix, token, folder):
             f"<p><a href='{html.escape(prefix, quote=True)}/'>Submit a new report</a></p>"
             "</main></body></html>"
         )
+    job_detail = (
+        f"<p>PBS job: <code>{html.escape(job_id)}</code>.</p>" if job_id else ""
+    )
+    active_jobs = html.escape(OOD_ACTIVE_JOBS_URL, quote=True)
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Analysis queued</title>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Report queued</title>"
         "<meta http-equiv='refresh' content='10'></head><body><main>"
         f"<h1>Report queued</h1><p>Status: <strong>{html.escape(status)}</strong>.</p>"
-        "<p>This page refreshes every 10 seconds. The full report will appear when the PBS job completes.</p>"
+        f"{job_detail}<p><a href='{active_jobs}' target='_blank' rel='noopener'>"
+        "Open this job in OOD Active Jobs</a>.</p>"
+        "<p>You may leave this page. It refreshes every 10 seconds and the full report "
+        "will appear here when PBS finishes.</p>"
         f"<p><a href='{html.escape(prefix, quote=True)}/results/{token}/report.html'>Refresh now</a></p>"
         "</main></body></html>"
     )
@@ -306,6 +320,7 @@ def application(environ, start_response):
                 if Path(PBS_SUBMIT_COMMAND).is_absolute()
                 else shutil.which(PBS_SUBMIT_COMMAND) is not None
             ),
+            "active_jobs_url": OOD_ACTIVE_JOBS_URL,
             "compute_python": compute_python,
             "compute_python_exists": Path(compute_python).is_file(),
             "uniprot": "deferred_to_compute_job",
