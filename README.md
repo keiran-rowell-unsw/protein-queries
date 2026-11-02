@@ -61,61 +61,38 @@ For a local test only:
 .venv/bin/python -m protein_agent.report --output results --accession YOUR_ACCESSION
 ```
 
-### Open OnDemand Passenger app with optional PBS enrichment
+### Open OnDemand Passenger app: fully queued
 
-The repository root contains `manifest.yml` and `passenger_wsgi.py`, so it can be cloned
-as a **per-user OOD Python Passenger app**. `ood_app.py` is the dependency-free WSGI front
-end. It accepts a sequence or UniProt accession in the user's authenticated PUN, stores it
-in the private `~/ondemand/data/protein-queries/reports/<random-id>/` directory. When a
-sequence is supplied, the PUN immediately produces a **preliminary, sequence-only**
-Biopython report (with local plots) without calling UniProt, PDBe, Foldseek or ResTech.
-It then automatically submits a PBS job to verify UniProt identity and regenerate the
-report with annotations, metapredict, structural retrieval and Foldseek on a compute node.
-If only an accession is supplied, there is no sequence to calculate from locally: the
-app shows a pending page while the compute job fetches the canonical sequence. When both
-are supplied, the preliminary report uses the submitted sequence; the compute job verifies
-the accession and may replace its calculations with the canonical sequence, explicitly
-noting a mismatch. A failed job submission leaves the preliminary sequence report intact
-and offers a retry; it must not masquerade as complete enrichment. Queued reports
-refresh automatically while the job is running. The PBS job ID is retained in the
-private report directory as `job-id.txt` for scheduler accounting.
+This branch provides a **PBS-only** Passenger app. The per-user web process validates a
+sequence or UniProt accession, writes the request to the user's private
+`~/ondemand/data/protein-queries/reports/<random-id>/` directory, submits one PBS job, and
+serves a status page. It performs no Biopython calculations, retrieval, inference, or
+structure processing on the OOD host. The compute job produces the complete report,
+including UniProt verification, metapredict, PDBe retrieval and optional Foldseek search.
+The PBS job ID is retained as `job-id.txt` for scheduler accounting.
 
 ```bash
 cd ~/ondemand/dev
-# Only if not already cloned:
-git clone git@github.com:keiran-rowell-unsw/protein-queries.git
-# If already cloned:
-cd protein-queries && git pull
+git clone --branch passenger-fully-queued \
+  git@github.com:keiran-rowell-unsw/protein-queries.git protein-queries-queued
 ```
 
-**Site prerequisites before launch:** the OOD host's per-user PUN must support Python
-Passenger. The included executable `bin/python` wrapper selects the user's shared
-uv-managed Python 3.12.9 or a system Python >=3.8 (override with
-`PROTEIN_OOD_PYTHON` in the PUN environment). This bypasses OOD's platform wrapper,
-which calls a missing `python` on some hosts. After pulling updates, restart the PUN
-from the OOD dashboard if Passenger still runs an older version. The OOD/PUN host must have the lightweight project `.venv` and be allowed to invoke
-`qsub`; compute nodes must see the shared project and result directory. For a per-user
-installation, clone the project into the user's OOD app directory and run
-`bin/setup-passenger-env` there; this creates the small `.venv` without PyTorch. The app
-now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
-`PROTEIN_REPORT_PROJECT` only when using a shared installation, and set
-`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path. On an **allocated compute
-node**, run `bin/setup-compute-env` once in the same shared clone. It uses the committed
-`uv.lock` and CPU-only PyTorch index to build `.compute-venv` separately from the small
-Passenger `.venv`. The app discovers `<project>/.compute-venv/bin/python` automatically;
-no `PROTEIN_REPORT_EXTENDED_PYTHON` setting is required for this layout. Set that variable
-only when using a centrally managed compute environment at a different absolute path.
-The clone and the report directory must be visible at the same paths from both the OOD
-PUN and compute nodes. `uv` and access to its package sources (or an approved mirror)
-are needed for the one-time compute-node setup. No dependency installation runs in a
-Passenger request or a report PBS job.
-`PROTEIN_REPORT_EXECUTION=local` is the intended PUN configuration; never target a login
-node for these computations. Running even lightweight Biopython calculations on the OOD
-host requires site approval. Results persist until manually removed, so establish a
-retention policy. These prerequisites have **not** been verified from the separate OOD
-host. OOD serves this app under its authenticated PUN;
-do not expose the separate `protein_agent.web` prototype to researchers, since it has no
-built-in login (even loopback on a shared node is accessible to other local users).
+**Deployment prerequisites:**
+
+- The PUN must support Python Passenger and be allowed to invoke `qsub`.
+- `bin/python` must find Python 3.11 or newer; no scientific Python environment is needed
+  by Passenger itself.
+- The project clone and report directory must be visible at identical paths on the PUN and
+  compute nodes.
+- Prefer a centrally maintained full compute environment and set
+  `PROTEIN_REPORT_EXTENDED_PYTHON` to its absolute Python path. Alternatively, an
+  administrator can create `<project>/.compute-venv` once with `bin/setup-compute-env`.
+- Set `PBS_SUBMIT_COMMAND` only if `qsub` is not available under that name.
+- Establish a report-retention policy; results are not automatically deleted.
+
+No dependency installation occurs during a web request or report job. Restart the PUN
+after changing branches or environment configuration. The separate
+`protein_agent.web` prototype has no authentication and is not the OOD deployment.
 
 ## Hard rule: no memory-only answers
 

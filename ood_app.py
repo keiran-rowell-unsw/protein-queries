@@ -1,7 +1,7 @@
-"""Open OnDemand Passenger WSGI front end with optional PBS-backed enrichment.
+"""Open OnDemand Passenger front end for reports executed entirely through PBS.
 
-The PUN runs only the lightweight report. Extended analysis is submitted to PBS and runs
-on a compute node. Inputs and results live in the user's private shared directory.
+The PUN validates and stores input, submits one job, and serves status/results. All protein
+calculation and retrieval runs on an allocated compute node.
 """
 
 # HTML template and WSGI responses are kept readable as continuous lines.
@@ -11,7 +11,6 @@ import fcntl
 import hmac
 import html
 import json
-import logging
 import os
 import re
 import secrets
@@ -24,21 +23,16 @@ from urllib.parse import parse_qs
 
 HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
-EXECUTION_MODE = os.environ.get("PROTEIN_REPORT_EXECUTION", "local").strip().lower()
 PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
 DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
-UNIPROT_BASE_URL = os.environ.get("UNIPROT_BASE_URL", "https://rest.uniprot.org").rstrip("/")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
 MAX_CHAT_MESSAGES = 12
-MAX_EXTEND_BODY = 2_000
 MAX_SEQUENCE_RESIDUES = 5_000
 # Temporarily disabled while the retrieval interface is being expanded.
 REPORT_ASSISTANT_ENABLED = False
-LOGGER = logging.getLogger("protein_queries.ood_app")
-LAST_REPORT_ERROR = None
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
          "hydropathy.png": "image/png", "disorder.png": "image/png",
@@ -70,8 +64,8 @@ def page(prefix, csrf, message=""):
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
 <div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
-<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
-<button type="submit">Generate report</button>
+<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
+<button type="submit">Queue report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
 
 
@@ -151,7 +145,7 @@ def run_report_chat(folder, question, history):
 
 
 def validate_sequence(text):
-    """Validate locally so malformed user input is a 400, not an SSH failure."""
+    """Validate locally so malformed user input is rejected before PBS submission."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         raise ValueError("no sequence")
@@ -168,43 +162,6 @@ def validate_sequence(text):
         raise ValueError("use standard amino-acid letters with no gaps")
 
 
-def run_report(sequence, folder, accession=""):
-    """Run sequence-only calculations in the Passenger user's local environment."""
-    if EXECUTION_MODE != "local":
-        raise RuntimeError("preliminary reports must run locally; SSH/login nodes are disabled")
-    if not PROJECT.startswith("/"):
-        raise RuntimeError("project path must be absolute")
-    source = folder / "input.fasta"
-    source.write_text(sequence, encoding="utf-8")
-    args = [PROJECT + "/.venv/bin/python", "-m", "protein_agent.report",
-            "--input", str(source), "--output", str(folder), "--lightweight"]
-    if accession:
-        args.extend(["--accession", accession])
-    result = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
-    if result.returncode != 0 or not (folder / "report.html").is_file():
-        global LAST_REPORT_ERROR
-        LAST_REPORT_ERROR = {
-            "mode": EXECUTION_MODE,
-            "python": args[0],
-            "returncode": result.returncode,
-            "stderr": (result.stderr or "").strip()[-4_000:],
-        }
-        LOGGER.error(
-            "report subprocess failed: mode=%s python=%s returncode=%s stderr=%s",
-            EXECUTION_MODE,
-            args[0],
-            result.returncode,
-            (result.stderr or "").strip()[-4_000:],
-        )
-        raise RuntimeError("lightweight report subprocess failed; check the Passenger project environment")
-
-
 def _write_json(path, payload):
     temporary = path.with_name("." + path.name + ".tmp")
     try:
@@ -214,8 +171,8 @@ def _write_json(path, payload):
         temporary.unlink(missing_ok=True)
 
 
-def submit_extended_analysis(folder):
-    """Submit the deferred analysis to PBS; never execute it in the Passenger worker."""
+def submit_report_job(folder):
+    """Submit the complete report to PBS; Passenger performs no report calculations."""
     job_path = folder / "job.json"
     if job_path.is_file():
         try:
@@ -245,12 +202,12 @@ def submit_extended_analysis(folder):
     accession = request.get("accession")
     if isinstance(accession, str) and accession:
         command.extend(["--accession", accession])
-    script = folder / ".extended.pbs"
-    reservation = folder / ".extend-reserved"
+    script = folder / ".report.pbs"
+    reservation = folder / ".submission-reserved"
     job_json = str(job_path)
     script.write_text(
         "#!/bin/bash\n"
-        "#PBS -N protein-extended\n"
+        "#PBS -N protein-report\n"
         "#PBS -l walltime=00:20:00\n"
         "#PBS -l ncpus=2\n"
         "#PBS -l mem=4gb\n"
@@ -283,7 +240,7 @@ def submit_extended_analysis(folder):
             check=False,
         )
         if result.returncode != 0 or not result.stdout.strip():
-            raise RuntimeError("extended analysis could not be queued")
+            raise RuntimeError("report could not be queued")
         job_id = result.stdout.strip().splitlines()[0]
         (folder / "job-id.txt").write_text(job_id + "\n", encoding="utf-8")
         payload = {"status": "queued", "job_id": job_id}
@@ -305,41 +262,22 @@ def pending_page(prefix, token, folder):
         job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
     status = str(job.get("status") or "queued")
     if status in {"failed", "unavailable"}:
+        reason = html.escape(str(job.get("reason") or "The compute job did not complete."))
         return (
             "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            "<title>Analysis unavailable</title></head><body><main>"
-            "<h1>Analysis unavailable</h1><p>No sequence was provided for a preliminary "
-            "report, and the compute job did not complete. Please submit again later.</p>"
-            f"<p><a href='{html.escape(prefix, quote=True)}/'>New report</a></p>"
+            "<title>Report unavailable</title></head><body><main>"
+            f"<h1>Report unavailable</h1><p>{reason}</p>"
+            f"<p><a href='{html.escape(prefix, quote=True)}/'>Submit a new report</a></p>"
             "</main></body></html>"
         )
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Analysis queued</title>"
         "<meta http-equiv='refresh' content='10'></head><body><main>"
-        f"<h1>Analysis queued</h1><p>Status: <strong>{html.escape(status)}</strong>.</p>"
-        "<p>This page refreshes every 10 seconds. The report will appear when the PBS job completes.</p>"
+        f"<h1>Report queued</h1><p>Status: <strong>{html.escape(status)}</strong>.</p>"
+        "<p>This page refreshes every 10 seconds. The full report will appear when the PBS job completes.</p>"
         f"<p><a href='{html.escape(prefix, quote=True)}/results/{token}/report.html'>Refresh now</a></p>"
         "</main></body></html>"
     )
-
-
-def extended_card(prefix, token, folder, csrf):
-    job_path = folder / "job.json"
-    if job_path.is_file():
-        try:
-            job = json.loads(job_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            job = {"status": "unknown"}
-        status = str(job.get("status") or "unknown")
-        if status == "complete":
-            return '<div class="report-shell"><div class="note"><strong>Enrichment complete.</strong> Refresh the report for UniProt and structural results.</div></div>'
-        if status not in {"failed", "unavailable"}:
-            return '<div class="report-shell"><div class="note"><strong>UniProt and structural enrichment: %s.</strong> Refresh this page for status and results.</div></div>' % html.escape(status)
-        message = str(job.get("reason") or "Compute enrichment did not complete.")
-        message += " The preliminary sequence report remains available."
-    else:
-        message = "UniProt and structural enrichment was not queued. Retry on a compute node."
-    return '<div class="report-shell"><div class="note"><p>%s</p><form method="post" action="%s/results/%s/extend"><input type="hidden" name="csrf" value="%s"><button type="submit">Retry enrichment</button></form></div></div>' % (html.escape(message), html.escape(prefix, quote=True), token, html.escape(csrf, quote=True))
 
 
 def application(environ, start_response):
@@ -348,42 +286,16 @@ def application(environ, start_response):
     path = environ.get("PATH_INFO", "/")
     prefix = environ.get("SCRIPT_NAME", "").rstrip("/")
     if method == "GET" and path in {"/health", "/__health"}:
-        report_python = Path(PROJECT) / ".venv" / "bin" / "python"
-        report_check = {"version": None, "protein_agent_import": False, "error": None}
-        uniprot_check = {
-            "url": UNIPROT_BASE_URL,
-            "status": "deferred_to_compute_job",
-            "reason": "The Passenger worker does not contact UniProt.",
-        }
-        if report_python.is_file():
-            try:
-                checked = subprocess.run(
-                    [str(report_python), "-c", "import sys, protein_agent.report; print(sys.version)"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-                report_check = {
-                    "version": (checked.stdout or "").strip() or None,
-                    "protein_agent_import": checked.returncode == 0,
-                    "error": (checked.stderr or "").strip()[-2_000:] or None,
-                }
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                report_check["error"] = str(exc)
+        compute_python = EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON
         payload = {
             "passenger_python": sys.executable,
             "passenger_python_version": sys.version,
             "project": PROJECT,
-            "execution_mode": EXECUTION_MODE,
-            "report_python": str(report_python),
-            "report_python_exists": report_python.is_file(),
-            "report_python_check": report_check,
-            "uniprot_check": uniprot_check,
-            "last_report_error": LAST_REPORT_ERROR,
+            "report_execution": "pbs_only",
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
-            "extended_python": EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON,
-            "extended_python_exists": Path(EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON).is_file(),
+            "compute_python": compute_python,
+            "compute_python_exists": Path(compute_python).is_file(),
+            "uniprot": "deferred_to_compute_job",
         }
         return respond(
             start_response,
@@ -500,7 +412,7 @@ def application(environ, start_response):
                 raise ValueError("provide either a protein sequence or a UniProt accession")
             if text.strip():
                 validate_sequence(text)
-            # Both the local and compute-node parsers recheck the submitted sequence.
+            # Passenger validates only; the compute-node parser rechecks the same input.
             token = secrets.token_hex(16)
             ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
             folder = ROOT / token
@@ -508,24 +420,7 @@ def application(environ, start_response):
             try:
                 (folder / "input.fasta").write_text(text, encoding="utf-8")
                 _write_json(folder / "request.json", {"accession": accession})
-                if text.strip():
-                    # Biopython-only provisional report: no network, UniProt, or structure work.
-                    run_report(text, folder, accession)
-                try:
-                    # Enrichment, including UniProt identity, runs on a compute node.
-                    submit_extended_analysis(folder)
-                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-                    if not text.strip():
-                        raise  # accession-only input cannot have a local sequence report
-                    reason = "Compute enrichment could not be queued; check PBS configuration."
-                    if isinstance(exc, RuntimeError) and "compute environment is missing" in str(exc):
-                        reason = (
-                            "Compute dependencies are not installed. Run "
-                            "bin/setup-compute-env inside a PBS allocation."
-                        )
-                    _write_json(folder / "job.json", {
-                        "status": "unavailable", "reason": reason,
-                    })
+                submit_report_job(folder)
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 shutil.rmtree(folder)
                 raise
@@ -538,44 +433,11 @@ def application(environ, start_response):
                                 "<p role='alert'>Invalid sequence submission. Use one FASTA "
                                 "record or bare sequence, up to 5,000 residues.</p>"))
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            return respond(start_response, "503 Service Unavailable",
-                           "<p>Report unavailable. Ask the administrator to check the Passenger "
-                           "Python environment and project installation.</p>")
-    extend_parts = path.split("/")
-    is_extend = (
-        len(extend_parts) == 4
-        and extend_parts[1] == "results"
-        and TOKEN.fullmatch(extend_parts[2])
-        and extend_parts[3] == "extend"
-    )
-    if method == "POST" and is_extend:
-        folder = ROOT / extend_parts[2]
-        if not (folder / "report.json").is_file():
-            return respond(start_response, "404 Not Found", "Not found")
-        try:
-            size = int(environ.get("CONTENT_LENGTH") or 0)
-            if size < 1 or size > MAX_EXTEND_BODY:
-                raise ValueError("invalid extended-analysis request size")
-            raw = environ["wsgi.input"].read(size).decode("utf-8")
-            fields = parse_qs(raw, keep_blank_values=True)
-        except (KeyError, UnicodeError, ValueError):
-            return respond(start_response, "400 Bad Request", "Invalid extended-analysis request.")
-        cookies = dict(part.strip().split("=", 1) for part in
-                       environ.get("HTTP_COOKIE", "").split(";") if "=" in part)
-        stored = cookies.get("protein_report_csrf", "")
-        submitted = fields.get("csrf", [])
-        if set(fields) != {"csrf"}:
-            return respond(start_response, "400 Bad Request", "Invalid extended-analysis request.")
-        if (not TOKEN.fullmatch(stored) or len(submitted) != 1 or
-                not hmac.compare_digest(stored, submitted[0])):
-            return respond(start_response, "403 Forbidden", "Invalid form token. Reload the report.")
-        try:
-            submit_extended_analysis(folder)
-        except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            return respond(start_response, "503 Service Unavailable", "Extended analysis could not be queued.")
-        return respond(start_response, "303 See Other", b"", headers=[
-            ("Location", prefix + "/results/" + extend_parts[2] + "/report.html"),
-        ])
+            return respond(
+                start_response,
+                "503 Service Unavailable",
+                "<p>The report could not be queued. Check PBS and compute-environment configuration.</p>",
+            )
     if method == "GET" and path.startswith("/results/"):
         parts = path.split("/")
         if len(parts) == 4 and TOKEN.fullmatch(parts[2]) and parts[3] in FILES:
@@ -586,9 +448,6 @@ def application(environ, start_response):
             if result.is_file():
                 body = result.read_bytes()
                 csrf = secrets.token_hex(16)
-                if parts[3] == "report.html" and not REPORT_ASSISTANT_ENABLED:
-                    link = extended_card(prefix, parts[2], ROOT / parts[2], csrf).encode()
-                    body = body.replace(b"</body>", link + b"</body>")
                 if parts[3] == "report.html" and REPORT_ASSISTANT_ENABLED:
                     link = (
                         b'<div class="report-shell"><div class="note"><h2>Ask about this report</h2>'
@@ -599,9 +458,5 @@ def application(environ, start_response):
                 headers = []
                 if parts[3] == "report.html":
                     headers.append(("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; SameSite=Strict" % (csrf, prefix + "/")))
-                    with contextlib.suppress(OSError, ValueError, TypeError):
-                        job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
-                        if job.get("status") in {"queued", "running"}:
-                            headers.append(("Refresh", "10"))
                 return respond(start_response, "200 OK", body, FILES[parts[3]], headers=headers)
     return respond(start_response, "404 Not Found", "Not found")

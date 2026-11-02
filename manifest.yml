@@ -3,4 +3,4 @@ name: Protein Sequence Report
 category: Interactive Apps
 subcategory: Biology
 role: passenger
-description: Submit a protein sequence for a lightweight report; optionally queue extended analysis on a compute node.
+description: Queue a complete protein report on a PBS compute node from a sequence or UniProt accession.
