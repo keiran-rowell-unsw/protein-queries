@@ -187,7 +187,7 @@ def run_report(sequence, folder, accession=""):
             check=False,
         )
         if result.returncode != 0 or not (folder / "report.html").is_file():
-            raise RuntimeError("analysis failed; check OOD-to-katana3 SSH and the shared environment")
+            raise RuntimeError("lightweight report subprocess failed; check the Passenger project environment")
     finally:
         source.unlink(missing_ok=True)
 
@@ -411,8 +411,8 @@ def application(environ, start_response):
                                 "<p role='alert'>Invalid sequence submission. Check the input format and size.</p>"))
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return respond(start_response, "503 Service Unavailable",
-                           "<p>Report unavailable. Ask the administrator to check SSH access from "
-                           "the OOD host to katana3 and the shared project environment.</p>")
+                           "<p>Report unavailable. Ask the administrator to check the Passenger "
+                           "Python environment and project installation.</p>")
     extend_parts = path.split("/")
     is_extend = (
         len(extend_parts) == 4
