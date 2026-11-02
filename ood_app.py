@@ -27,12 +27,14 @@ PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().
 EXECUTION_MODE = os.environ.get("PROTEIN_REPORT_EXECUTION", "local").strip().lower()
 PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
+DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
 UNIPROT_BASE_URL = os.environ.get("UNIPROT_BASE_URL", "https://rest.uniprot.org").rstrip("/")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
 MAX_CHAT_MESSAGES = 12
 MAX_EXTEND_BODY = 2_000
+MAX_SEQUENCE_RESIDUES = 5_000
 # Temporarily disabled while the retrieval interface is being expanded.
 REPORT_ASSISTANT_ENABLED = False
 LOGGER = logging.getLogger("protein_queries.ood_app")
@@ -68,7 +70,7 @@ def page(prefix, csrf, message=""):
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
 <div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
-<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA and bare sequences are accepted.</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
+<div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Generate report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
 
@@ -160,8 +162,10 @@ def validate_sequence(text):
     if not lines or any(line.startswith(">") for line in lines):
         raise ValueError("provide exactly one FASTA record")
     sequence = "".join("".join(line.split()) for line in lines).upper()
-    if not 1 <= len(sequence) <= 10_000 or re.fullmatch(r"[ACDEFGHIKLMNPQRSTVWY]+", sequence) is None:
-        raise ValueError("use 1-10,000 standard amino-acid letters with no gaps")
+    if len(sequence) > MAX_SEQUENCE_RESIDUES:
+        raise ValueError("sequence exceeds the 5,000-residue input limit")
+    if not sequence or re.fullmatch(r"[ACDEFGHIKLMNPQRSTVWY]+", sequence) is None:
+        raise ValueError("use standard amino-acid letters with no gaps")
 
 
 def run_report(sequence, folder, accession=""):
@@ -227,13 +231,13 @@ def submit_extended_analysis(folder):
     request = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
-    if not EXTENDED_PYTHON:
-        raise RuntimeError(
-            "set PROTEIN_REPORT_EXTENDED_PYTHON before submitting extended analysis"
-        )
-    python = EXTENDED_PYTHON
+    python = EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON
     if not python.startswith("/"):
         raise RuntimeError("extended Python path must be absolute")
+    if not EXTENDED_PYTHON and not Path(python).is_file():
+        raise RuntimeError(
+            "compute environment is missing; run bin/setup-compute-env on a compute node"
+        )
     command = [
         python, "-m", "protein_agent.report", "--input", str(folder / "input.fasta"),
         "--output", str(folder), "--foldseek",
@@ -331,7 +335,8 @@ def extended_card(prefix, token, folder, csrf):
             return '<div class="report-shell"><div class="note"><strong>Enrichment complete.</strong> Refresh the report for UniProt and structural results.</div></div>'
         if status not in {"failed", "unavailable"}:
             return '<div class="report-shell"><div class="note"><strong>UniProt and structural enrichment: %s.</strong> Refresh this page for status and results.</div></div>' % html.escape(status)
-        message = "Enrichment was not completed; the preliminary report remains valid for the submitted sequence. Retry when the compute service is available."
+        message = str(job.get("reason") or "Compute enrichment did not complete.")
+        message += " The preliminary sequence report remains available."
     else:
         message = "UniProt and structural enrichment was not queued. Retry on a compute node."
     return '<div class="report-shell"><div class="note"><p>%s</p><form method="post" action="%s/results/%s/extend"><input type="hidden" name="csrf" value="%s"><button type="submit">Retry enrichment</button></form></div></div>' % (html.escape(message), html.escape(prefix, quote=True), token, html.escape(csrf, quote=True))
@@ -377,8 +382,8 @@ def application(environ, start_response):
             "uniprot_check": uniprot_check,
             "last_report_error": LAST_REPORT_ERROR,
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
-            "extended_python": EXTENDED_PYTHON or None,
-            "extended_python_exists": bool(EXTENDED_PYTHON and Path(EXTENDED_PYTHON).is_file()),
+            "extended_python": EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON,
+            "extended_python_exists": Path(EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON).is_file(),
         }
         return respond(
             start_response,
@@ -509,12 +514,17 @@ def application(environ, start_response):
                 try:
                     # Enrichment, including UniProt identity, runs on a compute node.
                     submit_extended_analysis(folder)
-                except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     if not text.strip():
                         raise  # accession-only input cannot have a local sequence report
+                    reason = "Compute enrichment could not be queued; check PBS configuration."
+                    if isinstance(exc, RuntimeError) and "compute environment is missing" in str(exc):
+                        reason = (
+                            "Compute dependencies are not installed. Run "
+                            "bin/setup-compute-env inside a PBS allocation."
+                        )
                     _write_json(folder / "job.json", {
-                        "status": "unavailable",
-                        "reason": "Compute enrichment could not be queued. The preliminary report remains available.",
+                        "status": "unavailable", "reason": reason,
                     })
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 shutil.rmtree(folder)
@@ -525,7 +535,8 @@ def application(environ, start_response):
         except (ValueError, UnicodeError):
             return respond(start_response, "400 Bad Request",
                            page(prefix, stored if TOKEN.fullmatch(stored) else "",
-                                "<p role='alert'>Invalid sequence submission. Check the input format and size.</p>"))
+                                "<p role='alert'>Invalid sequence submission. Use one FASTA "
+                                "record or bare sequence, up to 5,000 residues.</p>"))
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return respond(start_response, "503 Service Unavailable",
                            "<p>Report unavailable. Ask the administrator to check the Passenger "

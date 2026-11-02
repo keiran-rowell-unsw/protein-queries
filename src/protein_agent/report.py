@@ -34,7 +34,7 @@ from .report_sections import (
 from .uniprot_report import fetch_annotations, find_sequence_annotations
 
 MAX_INPUT_BYTES = 100_000
-MAX_RESIDUES = 10_000
+MAX_RESIDUES = 5_000
 
 
 def parse_sequence(text: str) -> tuple[str, str]:
@@ -53,7 +53,7 @@ def parse_sequence(text: str) -> tuple[str, str]:
         raise SequenceError("no residues found")
     sequence = "".join("".join(line.split()) for line in lines).upper()
     if len(sequence) > MAX_RESIDUES:
-        raise SequenceError("sequence exceeds the 10,000-residue limit")
+        raise SequenceError("sequence exceeds the 5,000-residue limit")
     invalid = sorted(set(sequence) - STANDARD_AA)
     if invalid:
         raise SequenceError(

@@ -59,7 +59,8 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     assert b"/pun/dev/protein-queries/run" in form["body"]
     assert b"Supply a UniProt accession" not in form["body"]
     assert b"Turn a protein identifier or sequence" in form["body"]
-    assert b"UniProt accession</label><span class=\"hint\">Queues a job to fetch results" in form["body"]
+    assert b"Queues a job to fetch results" in form["body"]
+    assert b"maximum 5,000 residues" in form["body"]
     cookie = form["headers"]["Set-Cookie"]
     token = cookie.split(";", 1)[0].split("=", 1)[1]
     params = {"csrf": token, "sequence": ">example\nACDEFGHIKLMNPQRSTVWY"}
@@ -170,7 +171,7 @@ def test_queue_failure_keeps_preliminary_report(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ood_app, "run_report", fake_report)
     monkeypatch.setattr(ood_app, "submit_extended_analysis", lambda _folder: (_ for _ in ()).throw(
-        RuntimeError("compute submission unavailable")
+        RuntimeError("compute environment is missing; run bin/setup-compute-env on a compute node")
     ))
     form = request("GET", "/")
     cookie = form["headers"]["Set-Cookie"]
@@ -184,6 +185,7 @@ def test_queue_failure_keeps_preliminary_report(monkeypatch, tmp_path):
     ))
     assert b"preliminary" in report["body"]
     assert b"Retry enrichment" in report["body"]
+    assert b"bin/setup-compute-env inside a PBS allocation" in report["body"]
     folder = next(tmp_path.iterdir())
     assert json.loads((folder / "job.json").read_text())["status"] == "unavailable"
     assert (folder / "input.fasta").is_file()
@@ -207,6 +209,23 @@ def test_csrf_and_invalid_input(monkeypatch, tmp_path):
     params = {"csrf": token, "sequence": ">a\nACD\n>b\nEFG"}
     result = request("POST", "/run", body=urlencode(params).encode(), cookie=cookie)
     assert result["status"] == "400 Bad Request"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_ood_residue_limit_applies_with_or_without_accession(monkeypatch, tmp_path):
+    monkeypatch.setattr(ood_app, "ROOT", tmp_path)
+    ood_app.validate_sequence(">synthetic\n" + "A" * 2500 + "\n" + "A" * 2500)
+    with pytest.raises(ValueError, match="5,000-residue"):
+        ood_app.validate_sequence("A" * 5001)
+    form = request("GET", "/")
+    cookie = form["headers"]["Set-Cookie"]
+    token = cookie.split(";", 1)[0].split("=", 1)[1]
+    for accession in ("", "Q12345"):
+        result = request("POST", "/run", body=urlencode({
+            "csrf": token, "sequence": "A" * 5001, "accession": accession,
+        }).encode(), cookie=cookie)
+        assert result["status"] == "400 Bad Request"
+        assert b"up to 5,000 residues" in result["body"]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -264,6 +283,56 @@ def test_extended_analysis_submits_pbs_script(monkeypatch, tmp_path):
     script = (folder / ".extended.pbs").read_text()
     assert "--foldseek" in script and "Q12345" in script
     assert "ssh" not in script
+
+
+def test_extended_job_uses_per_clone_compute_environment_without_extra_setting(
+    monkeypatch, tmp_path
+):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text(">synthetic\nACDEFGHIKLMNPQRSTVWY\n")
+    python = tmp_path / ".compute-venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "")
+    monkeypatch.setattr(ood_app, "DEFAULT_COMPUTE_PYTHON", str(python))
+    seen = {}
+
+    def fake_submit(args, **kwargs):
+        seen["args"] = args
+        return SimpleNamespace(returncode=0, stdout="123.server\n")
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_submit)
+    result = ood_app.submit_extended_analysis(folder)
+    assert result["status"] == "queued"
+    assert seen["args"][0] == "qsub"
+    assert str(python) in (folder / ".extended.pbs").read_text()
+
+
+def test_compute_setup_is_locked_and_kept_separate_from_passenger_venv():
+    from pathlib import Path
+
+    script = Path("bin/setup-compute-env").read_text()
+    assert "UV_PROJECT_ENVIRONMENT=" in script
+    assert "sync --locked --no-dev" in script
+    assert ".compute-venv/" in Path(".gitignore").read_text()
+    assert "./.venv/bin/python" not in script
+
+
+def test_missing_compute_environment_fails_before_submitting(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "")
+    monkeypatch.setattr(
+        ood_app, "DEFAULT_COMPUTE_PYTHON", str(tmp_path / ".compute-venv/bin/python")
+    )
+    monkeypatch.setattr(ood_app.subprocess, "run", lambda *_a, **_kw: pytest.fail(
+        "should not call qsub without a compute environment"
+    ))
+    with pytest.raises(RuntimeError, match="bin/setup-compute-env"):
+        ood_app.submit_extended_analysis(folder)
+    assert not (folder / ".extended.pbs").exists()
 
 
 def test_remote_report_chat_uses_stdin_not_shell_arguments(monkeypatch, tmp_path):

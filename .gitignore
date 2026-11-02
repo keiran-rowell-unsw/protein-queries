@@ -7,6 +7,7 @@ secrets/
 
 # uv / Python
 .venv/
+.compute-venv/
 venv/
 __pycache__/
 *.py[cod]

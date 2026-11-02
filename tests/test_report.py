@@ -133,10 +133,17 @@ def test_accession_precedes_different_submitted_sequence(monkeypatch, tmp_path):
     assert "accession precedence was applied" in path.read_text()
 
 
-@pytest.mark.parametrize("sequence", [">a\nACD\n>b\nEFG", "ACD-X", "ACD123", "A" * 10001])
+@pytest.mark.parametrize("sequence", [">a\nACD\n>b\nEFG", "ACD-X", "ACD123", "A" * 5001])
 def test_invalid_input_is_rejected_not_modified(sequence):
     with pytest.raises(SequenceError):
         parse_sequence(sequence)
+
+
+def test_sequence_limit_counts_residues_not_fasta_formatting():
+    header, sequence = parse_sequence(">synthetic sequence\n" + "A" * 2500 + "\n" + "A" * 2500)
+    assert header == "synthetic sequence" and len(sequence) == 5000
+    with pytest.raises(SequenceError, match="5,000-residue limit"):
+        parse_sequence(">synthetic sequence\n" + "A" * 5001)
 
 
 def test_local_web_accepts_accession_without_sequence(monkeypatch, tmp_path):

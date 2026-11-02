@@ -48,7 +48,7 @@ SoDoPE, SignalP/Razor, AI summaries, ChimeraX surface MLP or queued programs.
 Metapredict predicts disorder, **not solubility**. Identity is unresolved without a
 matching accession; experimental structures are reported only from PDBe mappings to a
 verified accession. Multiple FASTA records, gaps, ambiguous amino acids, and sequences longer
-than 10,000 residues are rejected rather than silently changed.
+than 5,000 residues are rejected rather than silently changed.
 
 For a local test only:
 
@@ -99,10 +99,16 @@ installation, clone the project into the user's OOD app directory and run
 `bin/setup-passenger-env` there; this creates the small `.venv` without PyTorch. The app
 now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
 `PROTEIN_REPORT_PROJECT` only when using a shared installation, and set
-`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path. Set
-`PROTEIN_REPORT_EXTENDED_PYTHON` to the absolute path of a compute-node environment
-containing metapredict/PyTorch before enabling the extended-analysis button; the
-lightweight Passenger environment is deliberately not used for that job.
+`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path. On an **allocated compute
+node**, run `bin/setup-compute-env` once in the same shared clone. It uses the committed
+`uv.lock` and CPU-only PyTorch index to build `.compute-venv` separately from the small
+Passenger `.venv`. The app discovers `<project>/.compute-venv/bin/python` automatically;
+no `PROTEIN_REPORT_EXTENDED_PYTHON` setting is required for this layout. Set that variable
+only when using a centrally managed compute environment at a different absolute path.
+The clone and the report directory must be visible at the same paths from both the OOD
+PUN and compute nodes. `uv` and access to its package sources (or an approved mirror)
+are needed for the one-time compute-node setup. No dependency installation runs in a
+Passenger request or a report PBS job.
 `PROTEIN_REPORT_EXECUTION=local` is the intended PUN configuration; never target a login
 node for these computations. Running even lightweight Biopython calculations on the OOD
 host requires site approval. Results persist until manually removed, so establish a
