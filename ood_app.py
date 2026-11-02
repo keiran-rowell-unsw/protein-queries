@@ -23,7 +23,9 @@ from urllib.parse import parse_qs
 
 HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
-PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
+PBS_SUBMIT_COMMAND = (
+    os.environ.get("PBS_SUBMIT_COMMAND") or shutil.which("qsub") or "/opt/pbs/bin/qsub"
+)
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
 DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
@@ -183,8 +185,14 @@ def submit_report_job(folder):
             return existing
     if not (folder / "input.fasta").is_file():
         raise RuntimeError("the retained input sequence is unavailable")
-    if not PROJECT.startswith("/") or not re.fullmatch(r"[A-Za-z0-9_.-]+", PBS_SUBMIT_COMMAND):
-        raise RuntimeError("invalid PBS configuration")
+    if not PROJECT.startswith("/"):
+        raise RuntimeError("invalid project configuration")
+    pbs_command = Path(PBS_SUBMIT_COMMAND)
+    if pbs_command.is_absolute():
+        if not pbs_command.is_file() or not os.access(pbs_command, os.X_OK):
+            raise RuntimeError("configured PBS submission command is unavailable")
+    elif not re.fullmatch(r"[A-Za-z0-9_.-]+", PBS_SUBMIT_COMMAND):
+        raise RuntimeError("invalid PBS submission command")
     request = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
@@ -293,6 +301,11 @@ def application(environ, start_response):
             "project": PROJECT,
             "report_execution": "pbs_only",
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
+            "pbs_submit_command_exists": (
+                Path(PBS_SUBMIT_COMMAND).is_file()
+                if Path(PBS_SUBMIT_COMMAND).is_absolute()
+                else shutil.which(PBS_SUBMIT_COMMAND) is not None
+            ),
             "compute_python": compute_python,
             "compute_python_exists": Path(compute_python).is_file(),
             "uniprot": "deferred_to_compute_job",
