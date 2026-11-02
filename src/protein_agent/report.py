@@ -19,6 +19,7 @@ from pathlib import Path
 from .config import Settings
 from .disorder import predict_disorder
 from .foldseek import FoldseekClient
+from .foldseek_query import prepare_query
 from .pdbe_report import fetch_pdbe_structures
 from .plots import plot_hydropathy
 from .properties import STANDARD_AA, SequenceError, chromophore_candidates, compute_properties
@@ -695,27 +696,76 @@ def _pdbe_section(record: dict) -> str:
     )
 
 
+def run_foldseek_search(pdbe: dict, output_dir: Path) -> dict:
+    """Run one bounded structural query; never turn a missing structure into a FASTA search."""
+    query_path = output_dir / ".foldseek-query.cif"
+    prepared = prepare_query(pdbe, query_path)
+    if prepared["status"] != "ready":
+        return prepared
+    foldseek_settings = Settings.from_env(require_key=False)
+    # Bound a queued public search so it cannot monopolise the OOD request.
+    foldseek_settings.request_timeout = min(foldseek_settings.request_timeout, 15.0)
+    foldseek = FoldseekClient(foldseek_settings)
+    try:
+        result = foldseek.search(query_path.read_text(encoding="utf-8"), database="pdb100")
+        result["query_structure"] = prepared
+        return result
+    except Exception:
+        return {
+            "status": "unavailable", "query_structure": prepared,
+            "reason": "The mapped structure could not be searched with Foldseek.",
+        }
+    finally:
+        foldseek.close()
+        query_path.unlink(missing_ok=True)
+
+
 def render_foldseek_section(data: dict) -> str:
-    """Show the bounded Foldseek response without treating hits as identity evidence."""
+    """Show verified structure provenance and bounded search candidates, never raw JSON."""
     record = data.get("foldseek") or {"status": "not_requested"}
     status = str(record.get("status") or "unknown")
     if status == "not_requested":
         return ""
-    payload = record.get("result")
-    readable = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    if status == "complete":
-        lead = (
-            "Foldseek returned a search result. Hits are candidates from the selected "
-            "database, not verified protein identity or experimental truth."
+    source = record.get("query_structure") or {}
+    if status != "complete":
+        reason = record.get("reason") or f"Search status: {status}."
+        return (
+            "<details><summary>Foldseek structural search</summary>"
+            f"<p>Not completed: {html.escape(str(reason))} "
+            "This does not mean that similar structures are absent.</p></details>"
         )
-    else:
-        lead = "Foldseek did not return a complete search result: " + status + "."
+    result = record.get("result") or {}
+    hits = result.get("hits") or []
+    rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(hit.get('target') or 'not returned'))}</td>"
+        f"<td>{html.escape(str(hit.get('alnLength') or 'not returned'))}</td>"
+        f"<td>{html.escape(str(hit.get('eval') if hit.get('eval') is not None else 'not returned'))}</td>"
+        "</tr>" for hit in hits
+    )
+    table = (
+        "<table><thead><tr><th>Structural candidate</th><th>Aligned residues</th>"
+        f"<th>Foldseek E-value</th></tr></thead><tbody>{rows}</tbody></table>"
+        if hits else "<p>No hits were returned under this Foldseek search.</p>"
+    )
+    label = (
+        f"{source.get('pdb_id', 'unknown PDB')} chain "
+        f"{source.get('chain_id', 'unknown')} (mapped by PDBe)"
+    )
+    entry_url = str(source.get("entry_url") or "")
+    query_label = (
+        f'<a href="{html.escape(entry_url, quote=True)}">{html.escape(label)}</a>'
+        if entry_url.startswith("https://www.ebi.ac.uk/pdbe/entry/pdb/")
+        else html.escape(label)
+    )
+    retrieved = html.escape(str(source.get("retrieved_at") or "date unavailable"))
     return (
-        "<details><summary>Foldseek search</summary>"
-        f"<p>{html.escape(lead)}</p>"
-        f"<p>Database: {html.escape(str(record.get('database') or 'not returned'))}; "
-        f"ticket: {html.escape(str(record.get('ticket') or 'not returned'))}.</p>"
-        f"<pre>{html.escape(readable)}</pre></details>"
+        "<details><summary>Foldseek structural candidates</summary>"
+        f"<p>Query structure: {query_label} (coordinates retrieved {retrieved}). "
+        f"Database: {html.escape(str(record.get('database') or 'not returned'))}. "
+        f"{html.escape(str(result.get('total_hits_reported', 0)))} hits returned; "
+        "showing up to five. Hits are structural candidates, not verified identity.</p>"
+        + table + "</details>"
     )
 
 
@@ -896,24 +946,10 @@ def generate_report(
             "reason": "A verified UniProt accession is required before PDBe lookup.",
         }
     )
-    if run_foldseek:
-        foldseek_settings = Settings.from_env(require_key=False)
-        # Keep the OOD SSH request bounded even when the public queue is busy.
-        foldseek_settings.request_timeout = min(foldseek_settings.request_timeout, 75.0)
-        foldseek = FoldseekClient(foldseek_settings)
-        try:
-            data["foldseek"] = foldseek.search(
-                f">{header}\n{sequence}", database="pdb100"
-            )
-        except Exception as exc:  # report the bounded service failure, never fail the report
-            data["foldseek"] = {
-                "status": "unavailable",
-                "reason": "Foldseek search could not be completed: " + str(exc),
-            }
-        finally:
-            foldseek.close()
-    else:
-        data["foldseek"] = {"status": "not_requested"}
+    data["foldseek"] = (
+        run_foldseek_search(data["pdbe"], output_dir)
+        if run_foldseek else {"status": "not_requested"}
+    )
     # Motifs and the position map are derived from the analysed sequence, plus the feature
     # list already fetched above; the structure section ranks the PDBe mappings already held.
     data["predicted_motifs"] = build_motifs(sequence, uniprot)

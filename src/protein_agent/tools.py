@@ -88,12 +88,12 @@ UNIPROT_TOOLS: list[dict[str, Any]] = [
 FOLDSEEK_TOOLS: list[dict[str, Any]] = [
     _fn(
         FOLDSEEK_SEARCH,
-        "Submit a protein sequence or structure text to the public Foldseek search API, "
-        "poll the job, and return its retrieved matches. Use only when the user explicitly "
-        "requests Foldseek. The query is sent to Foldseek as a file; the returned hits are "
-        "candidates and must not be presented as experimentally verified identity.",
+        "Submit a PDB or mmCIF structure to the public Foldseek structure-search API, "
+        "poll the job, and return structural-hit candidates. FASTA is not accepted: "
+        "Foldseek cannot infer 3D coordinates from an amino-acid sequence. Use only when "
+        "the user explicitly requests Foldseek AND provides a real structure file/content.",
         {
-            "query": {**_STRING, "description": "Protein FASTA, PDB, or mmCIF query text"},
+            "query": {**_STRING, "description": "PDB or mmCIF coordinate text, never FASTA"},
             "database": {**_STRING, "description": "Foldseek database name, e.g. pdb100"},
             "mode": {**_STRING, "description": "Optional Foldseek server mode"},
         },

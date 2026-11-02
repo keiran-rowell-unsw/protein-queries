@@ -90,7 +90,9 @@ from the OOD dashboard if Passenger still runs an older version. The OOD host mu
 able to reach `katana3` with `ssh -o BatchMode=yes -o
 StrictHostKeyChecking=yes katana3 true` as that user. The home directory must be shared
 between the OOD host and katana3, and the project `.venv` and its dependencies must be
-installed on katana3. To change the SSH hostname or project path, set
+installed on katana3. To run without SSH, set `PROTEIN_REPORT_EXECUTION=local`; the
+configured project `.venv` must then exist on the OOD/PUN host. The default is `ssh`. To
+change the SSH hostname or project path, set
 `PROTEIN_REPORT_SSH_HOST` and/or `PROTEIN_REPORT_PROJECT` in the PUN environment (site
 administrator), not through a user form. Ask the site administrator to approve SSH from
 OOD and report execution on katana3; this is not a scheduler request. Results persist until
@@ -161,8 +163,13 @@ result records its MCP server, tool, arguments, and retrieval time. The OOD repo
 shows a bounded ranked PDBe mapping after resolving a verified UniProt accession. Remaining
 work includes streaming and structured output in the CLI.
 
-The OOD report-only assistant is temporarily disabled. OOD report generation also submits
-its analysed sequence to the public Foldseek search API (`pdb100`) and adds the bounded
-candidate result to `report.json` and a collapsed **Foldseek search** section in the HTML.
-Foldseek failures do not invalidate the rest of the report; hits remain search candidates,
-not verified identity. The CLI supports the same opt-in path with `--foldseek`.
+The OOD report-only assistant is temporarily disabled. Foldseek auto-reporting only runs
+when a verified accession has a PDBe-mapped experimental structure with an accessible
+chain: the report downloads that structure from PDBe, isolates the mapped chain, and
+submits its mmCIF coordinates to Foldseek (`pdb100`, 3Di/AA mode). Raw FASTA is **never**
+submitted as a 3D structure. Up to five structural-hit candidates and the query PDB/chain
+appear in a collapsed section; bounded scores and provenance are saved in `report.json`.
+No mapped structure, an inaccessible structure, service failure, or a busy search is
+reported as skipped/unavailable/timeout, **not** as absence of structural neighbours.
+Foldseek hits are candidates, not protein identity. The CLI uses `--foldseek` to request
+this optional structure-backed path.

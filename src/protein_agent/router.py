@@ -79,13 +79,18 @@ def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None)
 
     is_sequence_query = bool(re.search(r"[ACDEFGHIKLMNPQRSTVWY]{20,}", question.upper()))
     wants_foldseek = bool(FOLDSEEK_HINTS.search(question))
+    has_structure_coordinates = bool(re.search(
+        r"(?m)^(?:data_[^\s]+|ATOM  |HETATM)", question
+    ))
     if is_sequence_query and not ACCESSION_RE.search(question):
         # The subject is the sequence itself. It must not be attached to an accession, so
         # the entry/fasta tools are withheld rather than merely discouraged.
         names.update({COMPUTE_PROPERTIES, CHROMOPHORE})
-        if wants_foldseek:
+        if wants_foldseek and has_structure_coordinates:
             names.add(FOLDSEEK_SEARCH)
             services.append("foldseek")
+        elif wants_foldseek:
+            reasons.append("Foldseek requires PDB/mmCIF coordinates, not a pasted FASTA")
         services.append("local-compute")
         reasons.append(
             "sequence pasted: identity is unresolved from sequence alone, so answer only "
@@ -138,10 +143,12 @@ def build_plan(question: str, *, pdbe_tools: list[dict[str, Any]] | None = None)
         else:
             reasons.append("PDBe API/Search MCP tools were discovered live")
 
-    if wants_foldseek:
+    if wants_foldseek and has_structure_coordinates:
         names.add(FOLDSEEK_SEARCH)
         services.append("foldseek")
-        reasons.append("Foldseek search explicitly requested")
+        reasons.append("Foldseek requested with PDB/mmCIF coordinates")
+    elif wants_foldseek:
+        reasons.append("Foldseek needs a structure file; no PDB/mmCIF coordinates were supplied")
 
     if ANNOTATION_HINTS.search(question):
         reasons.append("annotation fields must be read from the entry payload")
