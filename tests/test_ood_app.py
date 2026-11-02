@@ -147,6 +147,26 @@ def test_remote_run_uses_ssh_without_shell_or_pbs(monkeypatch, tmp_path):
     assert shlex.split(seen[-1][0][-1])[-2:] == ["--accession", "Q12345"]
 
 
+def test_local_run_avoids_ssh(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    seen = []
+
+    def fake_run(args, **kwargs):
+        seen.append((args, kwargs))
+        (folder / "report.html").write_text("generated")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(ood_app, "EXECUTION_MODE", "local")
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    ood_app.run_report("ACDE", folder)
+    args, kwargs = seen[0]
+    assert args[0].endswith("/.venv/bin/python")
+    assert "ssh" not in args
+    assert args[-1] == "--foldseek"
+    assert kwargs["timeout"] == 90
+
+
 def test_remote_report_chat_uses_stdin_not_shell_arguments(monkeypatch, tmp_path):
     folder = tmp_path / "report"
     folder.mkdir()
