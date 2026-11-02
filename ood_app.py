@@ -311,6 +311,23 @@ def application(environ, start_response):
     prefix = environ.get("SCRIPT_NAME", "").rstrip("/")
     if method == "GET" and path in {"/health", "/__health"}:
         report_python = Path(PROJECT) / ".venv" / "bin" / "python"
+        report_check = {"version": None, "protein_agent_import": False, "error": None}
+        if report_python.is_file():
+            try:
+                checked = subprocess.run(
+                    [str(report_python), "-c", "import sys, protein_agent; print(sys.version)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                report_check = {
+                    "version": (checked.stdout or "").strip() or None,
+                    "protein_agent_import": checked.returncode == 0,
+                    "error": (checked.stderr or "").strip()[-2_000:] or None,
+                }
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                report_check["error"] = str(exc)
         payload = {
             "passenger_python": sys.executable,
             "passenger_python_version": sys.version,
@@ -318,6 +335,7 @@ def application(environ, start_response):
             "execution_mode": EXECUTION_MODE,
             "report_python": str(report_python),
             "report_python_exists": report_python.is_file(),
+            "report_python_check": report_check,
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
             "extended_python": EXTENDED_PYTHON or None,
             "extended_python_exists": bool(EXTENDED_PYTHON and Path(EXTENDED_PYTHON).is_file()),
