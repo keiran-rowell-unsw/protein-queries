@@ -12,8 +12,19 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 
 "$PYTHON" --version
+if [[ -x "$VENV/bin/python" ]] && ! "$VENV/bin/python" -c \
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "Existing .venv uses an unsupported Python; recreating it." >&2
+  rm -rf "$VENV"
+fi
 if [[ ! -d "$VENV" ]]; then
   "$PYTHON" -m venv "$VENV"
+fi
+
+if ! "$VENV/bin/python" -c \
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "The selected Python is older than 3.11; set PROTEIN_OOD_PYTHON." >&2
+  exit 1
 fi
 
 "$VENV/bin/python" -m pip install --upgrade pip
