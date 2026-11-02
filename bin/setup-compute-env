@@ -26,8 +26,12 @@ UV_PROJECT_ENVIRONMENT="$ROOT/.compute-venv" "$UV" sync --locked --no-dev
 
 "$ROOT/.compute-venv/bin/python" - <<'PY'
 import importlib.metadata as metadata
+
+import metapredict
 import protein_agent.report
+import torch
+
 for package in ("biopython", "metapredict", "torch", "mcp", "pdbe-mcp-server"):
     metadata.version(package)
-print("Compute-node report environment is ready")
+print(f"Compute-node report environment is ready (torch {torch.__version__})")
 PY

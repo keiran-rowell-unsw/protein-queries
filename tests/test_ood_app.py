@@ -124,6 +124,12 @@ def test_csrf_invalid_fasta_and_residue_limit_are_rejected(monkeypatch, tmp_path
             cookie=cookie,
         )
         assert response["status"] == "400 Bad Request"
+    malformed_accession = request(
+        "POST", "/run",
+        body=urlencode({"csrf": csrf, "accession": "A123456"}).encode(),
+        cookie=cookie,
+    )
+    assert malformed_accession["status"] == "400 Bad Request"
     assert list(tmp_path.iterdir()) == []
     ood_app.validate_sequence(">synthetic\n" + "A" * 2500 + "\n" + "A" * 2500)
 
@@ -143,7 +149,12 @@ def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
     result = ood_app.submit_report_job(folder)
     assert result == {"status": "queued", "job_id": "123.server"}
-    assert seen["args"] == [ood_app.PBS_SUBMIT_COMMAND, str(folder / ".report.pbs")]
+    assert seen["args"] == [
+        ood_app.PBS_SUBMIT_COMMAND,
+        "-o", str(folder / "job.log"),
+        "-j", "oe",
+        str(folder / ".report.pbs"),
+    ]
     assert seen["kwargs"]["timeout"] == 15 and seen["kwargs"]["check"] is False
     assert (folder / "job-id.txt").read_text().strip() == "123.server"
     script = (folder / ".report.pbs").read_text()
@@ -172,6 +183,7 @@ def test_compute_setup_is_locked_and_separate_from_passenger():
     script = Path("bin/setup-compute-env").read_text()
     assert "UV_PROJECT_ENVIRONMENT=" in script
     assert "sync --locked --no-dev" in script
+    assert "import metapredict" in script and "import torch" in script
     assert ".compute-venv/" in Path(".gitignore").read_text()
 
 

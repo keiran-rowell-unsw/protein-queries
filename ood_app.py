@@ -68,7 +68,7 @@ def page(prefix, csrf, message=""):
 .panel{padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.9);box-shadow:0 24px 70px rgba(30,64,175,.12);backdrop-filter:blur(12px)}form{display:grid;gap:1.25rem}.field{display:grid;gap:.45rem}label{font-weight:700}.hint{color:var(--muted);font-size:.88rem}input,textarea{width:100%%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;padding:.8rem .9rem;transition:border-color .15s,box-shadow .15s}textarea{min-height:13rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9rem}input:focus,textarea:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 4px rgba(8,145,178,.13)}button{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(14,116,144,.22)}button:hover{filter:brightness(1.06)}[role=alert]{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
-<div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
+<div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Queue report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
@@ -222,7 +222,6 @@ def submit_report_job(folder):
         "#PBS -l walltime=00:20:00\n"
         "#PBS -l ncpus=2\n"
         "#PBS -l mem=4gb\n"
-        "#PBS -j oe\n"
         "set -u\n"
         f"printf '%s\\n' '{{\"status\":\"running\"}}' > {shlex.quote(job_json)}\n"
         f"if {shlex.join(command)}; then\n"
@@ -243,7 +242,12 @@ def submit_report_job(folder):
         return {"status": "queued", "reason": "submission already in progress"}
     try:
         result = subprocess.run(
-            [PBS_SUBMIT_COMMAND, str(script)],
+            [
+                PBS_SUBMIT_COMMAND,
+                "-o", str(folder / "job.log"),
+                "-j", "oe",
+                str(script),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -432,7 +436,9 @@ def application(environ, start_response):
                 raise ValueError("submit at most one sequence and one accession")
             text = (fields.get("sequence") or [""])[0]
             accession = (fields.get("accession") or [""])[0].strip().upper()
-            if accession and not re.fullmatch(r"[A-Z0-9]{6,10}(?:-[0-9]{1,2})?", accession):
+            if accession and not re.fullmatch(
+                r"(?:[A-Z0-9]{6}|[A-Z0-9]{10})(?:-[0-9]{1,2})?", accession
+            ):
                 raise ValueError("invalid UniProt accession")
             if len(text.encode("utf-8")) > 100_000:
                 raise ValueError("sequence input exceeds 100 KB")
