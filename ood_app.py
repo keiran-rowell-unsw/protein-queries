@@ -21,7 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
-PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", "/srv/scratch/sbf/protein_queries")
+PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
 EXECUTION_MODE = os.environ.get("PROTEIN_REPORT_EXECUTION", "local").strip().lower()
 PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"

@@ -85,8 +85,11 @@ uv-managed Python 3.12.9 or a system Python >=3.8 (override with
 `PROTEIN_OOD_PYTHON` in the PUN environment). This bypasses OOD's platform wrapper,
 which calls a missing `python` on some hosts. After pulling updates, restart the PUN
 from the OOD dashboard if Passenger still runs an older version. The OOD/PUN host must have the lightweight project `.venv` and be allowed to invoke
-`qsub`; compute nodes must see the shared project and result directory. Set
-`PROTEIN_REPORT_PROJECT` and, if needed, `PBS_SUBMIT_COMMAND` in the PUN environment.
+`qsub`; compute nodes must see the shared project and result directory. For a per-user
+installation, clone the project into the user's OOD app directory and create `.venv`
+there; the app now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
+`PROTEIN_REPORT_PROJECT` only when using a shared installation, and set
+`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path.
 The legacy `PROTEIN_REPORT_EXECUTION=ssh` mode remains available for testing, but is not
 recommended for deployment. Results persist until manually removed, so establish a
 retention policy. These prerequisites have **not** been verified from the separate OOD
