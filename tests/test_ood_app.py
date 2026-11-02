@@ -183,7 +183,7 @@ def test_extended_analysis_submits_pbs_script(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
     result = ood_app.submit_extended_analysis(folder)
     assert result == {"status": "queued", "job_id": "123.server"}
-    assert seen["args"] == ["qsub", "-terse", str(folder / ".extended.pbs")]
+    assert seen["args"] == ["qsub", str(folder / ".extended.pbs")]
     script = (folder / ".extended.pbs").read_text()
     assert "--foldseek" in script and "Q12345" in script
     assert "ssh" not in script

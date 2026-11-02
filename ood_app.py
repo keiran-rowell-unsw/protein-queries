@@ -29,6 +29,7 @@ ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
 MAX_CHAT_MESSAGES = 12
+MAX_EXTEND_BODY = 2_000
 # Temporarily disabled while the retrieval interface is being expanded.
 REPORT_ASSISTANT_ENABLED = False
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
@@ -249,20 +250,30 @@ def submit_extended_analysis(folder):
         encoding="utf-8",
     )
     script.chmod(0o700)
-    result = subprocess.run(
-        [PBS_SUBMIT_COMMAND, "-terse", str(script)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError("extended analysis could not be queued")
-    job_id = result.stdout.strip().splitlines()[0]
-    payload = {"status": "queued", "job_id": job_id}
-    _write_json(job_path, payload)
-    return payload
+    reservation = folder / ".extend-reserved"
+    try:
+        fd = os.open(reservation, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        return {"status": "queued", "reason": "submission already in progress"}
+    try:
+        result = subprocess.run(
+            [PBS_SUBMIT_COMMAND, str(script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            raise RuntimeError("extended analysis could not be queued")
+        job_id = result.stdout.strip().splitlines()[0]
+        payload = {"status": "queued", "job_id": job_id}
+        _write_json(job_path, payload)
+        return payload
+    except Exception:
+        reservation.unlink(missing_ok=True)
+        raise
 
 
 def extended_card(prefix, token, folder, csrf):
@@ -427,11 +438,20 @@ def application(environ, start_response):
         folder = ROOT / extend_parts[2]
         if not (folder / "report.json").is_file():
             return respond(start_response, "404 Not Found", "Not found")
+        try:
+            size = int(environ.get("CONTENT_LENGTH") or 0)
+            if size < 1 or size > MAX_EXTEND_BODY:
+                raise ValueError("invalid extended-analysis request size")
+            raw = environ["wsgi.input"].read(size).decode("utf-8")
+            fields = parse_qs(raw, keep_blank_values=True)
+        except (KeyError, UnicodeError, ValueError):
+            return respond(start_response, "400 Bad Request", "Invalid extended-analysis request.")
         cookies = dict(part.strip().split("=", 1) for part in
                        environ.get("HTTP_COOKIE", "").split(";") if "=" in part)
-        fields = parse_qs(environ.get("wsgi.input").read(int(environ.get("CONTENT_LENGTH") or 0)).decode("utf-8"), keep_blank_values=True)
         stored = cookies.get("protein_report_csrf", "")
         submitted = fields.get("csrf", [])
+        if set(fields) != {"csrf"}:
+            return respond(start_response, "400 Bad Request", "Invalid extended-analysis request.")
         if (not TOKEN.fullmatch(stored) or len(submitted) != 1 or
                 not hmac.compare_digest(stored, submitted[0])):
             return respond(start_response, "403 Forbidden", "Invalid form token. Reload the report.")

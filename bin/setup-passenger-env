@@ -12,7 +12,7 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 
 "$PYTHON" --version
-if [[ -x "$VENV/bin/python" ]] && ! "$VENV/bin/python" -c \
+if [[ ! -x "$VENV/bin/python" ]] || ! "$VENV/bin/python" -c \
     'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
   echo "Existing .venv uses an unsupported Python; recreating it." >&2
   rm -rf "$VENV"

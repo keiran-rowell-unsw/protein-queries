@@ -4,6 +4,10 @@
 set -euo pipefail
 
 if [[ -n "${PROTEIN_OOD_PYTHON:-}" ]]; then
+  if ! "$PROTEIN_OOD_PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    echo "PROTEIN_OOD_PYTHON must be Python >= 3.11." >&2
+    exit 1
+  fi
   exec "$PROTEIN_OOD_PYTHON" "$@"
 fi
 
