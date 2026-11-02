@@ -883,6 +883,7 @@ def generate_report(
     *,
     accession: str = "",
     run_foldseek: bool = False,
+    lightweight: bool = False,
 ) -> Path:
     raw_input = ""
     if input_path is not None:
@@ -935,16 +936,30 @@ def generate_report(
     data["input_source"] = input_source
     data["generated_at_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
     plot_hydropathy(sequence, label=header, out_path=output_dir / "hydropathy.png")
-    data["disorder_prediction"] = predict_disorder(sequence, output_dir / "disorder.png")
+    data["disorder_prediction"] = (
+        {
+            "status": "skipped",
+            "reason": "Deferred to extended analysis; lightweight Passenger report requested.",
+        }
+        if lightweight
+        else predict_disorder(sequence, output_dir / "disorder.png")
+    )
     data["chromophore_candidates"] = chromophore_candidates(sequence)
     data["uniprot"] = uniprot
     data["pdbe"] = (
-        fetch_pdbe_structures(data["uniprot"]["accession"])
-        if data["uniprot"]["status"] == "verified"
-        else {
+        {
             "status": "not_requested",
-            "reason": "A verified UniProt accession is required before PDBe lookup.",
+            "reason": "Deferred to extended analysis; lightweight Passenger report requested.",
         }
+        if lightweight
+        else (
+            fetch_pdbe_structures(data["uniprot"]["accession"])
+            if data["uniprot"]["status"] == "verified"
+            else {
+                "status": "not_requested",
+                "reason": "A verified UniProt accession is required before PDBe lookup.",
+            }
+        )
     )
     data["foldseek"] = (
         run_foldseek_search(data["pdbe"], output_dir)
@@ -977,12 +992,21 @@ def main() -> int:
     parser.add_argument(
         "--foldseek",
         action="store_true",
-        help="run the submitted sequence through the public Foldseek search API",
+        help="run the submitted structure through the public Foldseek search API",
+    )
+    parser.add_argument(
+        "--lightweight",
+        action="store_true",
+        help="skip metapredict and structural retrieval for a fast Passenger report",
     )
     args = parser.parse_args()
     try:
         report = generate_report(
-            args.input, args.output, accession=args.accession, run_foldseek=args.foldseek
+            args.input,
+            args.output,
+            accession=args.accession,
+            run_foldseek=args.foldseek,
+            lightweight=args.lightweight,
         )
     except (SequenceError, OSError, UnicodeError, ValueError) as exc:
         print(f"Report not generated: {exc}", file=sys.stderr)

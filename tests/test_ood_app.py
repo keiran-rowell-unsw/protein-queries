@@ -130,6 +130,7 @@ def test_remote_run_uses_ssh_without_shell_or_pbs(monkeypatch, tmp_path):
         (folder / "report.html").write_text("generated")
         return SimpleNamespace(returncode=0)
 
+    monkeypatch.setattr(ood_app, "EXECUTION_MODE", "ssh")
     monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
     ood_app.run_report("ACDE", folder)
     args, kwargs = seen[0]
@@ -139,7 +140,7 @@ def test_remote_run_uses_ssh_without_shell_or_pbs(monkeypatch, tmp_path):
         str(folder / "input.fasta"),
         "--output",
         str(folder),
-        "--foldseek",
+        "--lightweight",
     ]
     assert kwargs["timeout"] == 90 and kwargs["check"] is False
     assert not (folder / "input.fasta").exists()
@@ -163,8 +164,29 @@ def test_local_run_avoids_ssh(monkeypatch, tmp_path):
     args, kwargs = seen[0]
     assert args[0].endswith("/.venv/bin/python")
     assert "ssh" not in args
-    assert args[-1] == "--foldseek"
+    assert args[-1] == "--lightweight"
     assert kwargs["timeout"] == 90
+
+
+def test_extended_analysis_submits_pbs_script(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "report.json").write_text("{}")
+    (folder / "input.fasta").write_text(">x\nACDEFGHIKLMNPQRSTVWY")
+    (folder / "request.json").write_text(json.dumps({"accession": "Q12345"}))
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["args"] = args
+        return SimpleNamespace(returncode=0, stdout="123.server\n")
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    result = ood_app.submit_extended_analysis(folder)
+    assert result == {"status": "queued", "job_id": "123.server"}
+    assert seen["args"] == ["qsub", "-terse", str(folder / ".extended.pbs")]
+    script = (folder / ".extended.pbs").read_text()
+    assert "--foldseek" in script and "Q12345" in script
+    assert "ssh" not in script
 
 
 def test_remote_report_chat_uses_stdin_not_shell_arguments(monkeypatch, tmp_path):
@@ -188,6 +210,7 @@ def test_remote_report_chat_uses_stdin_not_shell_arguments(monkeypatch, tmp_path
 @pytest.mark.parametrize("host", ["bad host", "-bad", "host;echo"])
 def test_ssh_host_config_rejects_shell_input(monkeypatch, tmp_path, host):
     monkeypatch.setattr(ood_app, "HOST", host)
+    monkeypatch.setattr(ood_app, "EXECUTION_MODE", "ssh")
     with pytest.raises(RuntimeError):
         ood_app.run_report("ACDE", tmp_path)
 

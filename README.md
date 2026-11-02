@@ -65,13 +65,11 @@ For a local test only:
 
 The repository root contains `manifest.yml` and `passenger_wsgi.py`, so it can be cloned
 as a **per-user OOD Python Passenger app**. `ood_app.py` is the dependency-free WSGI front
-end. It accepts a sequence in the user's authenticated PUN, stores it temporarily in
-`~/ondemand/data/protein-queries/reports/<random-id>/`, and invokes
-`/srv/scratch/sbf/protein_queries/.venv/bin/python -m protein_agent.report` on `katana3`
-via non-interactive per-user SSH. The temporary input is deleted; results remain in that
-private directory. There is no PBS job, persistent listener on katana3, or inference key.
-The metapredict step runs within the same SSH request and is capped at 2,000 residues
-to avoid tying up the per-user portal process for unusually long analyses.
+end. It accepts a sequence in the user's authenticated PUN, stores it in the private
+`~/ondemand/data/protein-queries/reports/<random-id>/` directory, and runs a lightweight
+report with the configured project virtual environment. The report page offers an
+extended-analysis button that submits a PBS job for metapredict, structural retrieval,
+and Foldseek; those heavier steps run on an allocated compute node rather than the PUN.
 
 ```bash
 cd ~/ondemand/dev
@@ -86,18 +84,13 @@ Passenger. The included executable `bin/python` wrapper selects the user's share
 uv-managed Python 3.12.9 or a system Python >=3.8 (override with
 `PROTEIN_OOD_PYTHON` in the PUN environment). This bypasses OOD's platform wrapper,
 which calls a missing `python` on some hosts. After pulling updates, restart the PUN
-from the OOD dashboard if Passenger still runs an older version. The OOD host must be
-able to reach `katana3` with `ssh -o BatchMode=yes -o
-StrictHostKeyChecking=yes katana3 true` as that user. The home directory must be shared
-between the OOD host and katana3, and the project `.venv` and its dependencies must be
-installed on katana3. To run without SSH, set `PROTEIN_REPORT_EXECUTION=local`; the
-configured project `.venv` must then exist on the OOD/PUN host. The default is `ssh`. To
-change the SSH hostname or project path, set
-`PROTEIN_REPORT_SSH_HOST` and/or `PROTEIN_REPORT_PROJECT` in the PUN environment (site
-administrator), not through a user form. Ask the site administrator to approve SSH from
-OOD and report execution on katana3; this is not a scheduler request. Results persist until
-manually removed, so establish a retention policy. These prerequisites have **not** been
-verified from the separate OOD host. OOD serves this app under its authenticated PUN;
+from the OOD dashboard if Passenger still runs an older version. The OOD/PUN host must have the lightweight project `.venv` and be allowed to invoke
+`qsub`; compute nodes must see the shared project and result directory. Set
+`PROTEIN_REPORT_PROJECT` and, if needed, `PBS_SUBMIT_COMMAND` in the PUN environment.
+The legacy `PROTEIN_REPORT_EXECUTION=ssh` mode remains available for testing, but is not
+recommended for deployment. Results persist until manually removed, so establish a
+retention policy. These prerequisites have **not** been verified from the separate OOD
+host. OOD serves this app under its authenticated PUN;
 do not expose the separate `protein_agent.web` prototype to researchers, since it has no
 built-in login (even loopback on a shared node is accessible to other local users).
 
