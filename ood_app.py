@@ -35,6 +35,7 @@ MAX_EXTEND_BODY = 2_000
 # Temporarily disabled while the retrieval interface is being expanded.
 REPORT_ASSISTANT_ENABLED = False
 LOGGER = logging.getLogger("protein_queries.ood_app")
+LAST_REPORT_ERROR = None
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
          "hydropathy.png": "image/png", "disorder.png": "image/png",
@@ -192,6 +193,13 @@ def run_report(sequence, folder, accession=""):
             check=False,
         )
         if result.returncode != 0 or not (folder / "report.html").is_file():
+            global LAST_REPORT_ERROR
+            LAST_REPORT_ERROR = {
+                "mode": EXECUTION_MODE,
+                "python": args[0],
+                "returncode": result.returncode,
+                "stderr": (result.stderr or "").strip()[-4_000:],
+            }
             LOGGER.error(
                 "report subprocess failed: mode=%s python=%s returncode=%s stderr=%s",
                 EXECUTION_MODE,
@@ -315,7 +323,7 @@ def application(environ, start_response):
         if report_python.is_file():
             try:
                 checked = subprocess.run(
-                    [str(report_python), "-c", "import sys, protein_agent; print(sys.version)"],
+                    [str(report_python), "-c", "import sys, protein_agent.report; print(sys.version)"],
                     capture_output=True,
                     text=True,
                     timeout=10,
@@ -336,6 +344,7 @@ def application(environ, start_response):
             "report_python": str(report_python),
             "report_python_exists": report_python.is_file(),
             "report_python_check": report_check,
+            "last_report_error": LAST_REPORT_ERROR,
             "pbs_submit_command": PBS_SUBMIT_COMMAND,
             "extended_python": EXTENDED_PYTHON or None,
             "extended_python_exists": bool(EXTENDED_PYTHON and Path(EXTENDED_PYTHON).is_file()),
