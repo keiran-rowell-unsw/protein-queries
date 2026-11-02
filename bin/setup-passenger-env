@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Create the small per-user environment used by the Passenger lightweight report.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${PROTEIN_OOD_PYTHON:-$ROOT/bin/python}"
+VENV="$ROOT/.venv"
+
+if [[ ! -x "$PYTHON" ]]; then
+  echo "Python launcher not found: $PYTHON" >&2
+  exit 1
+fi
+
+"$PYTHON" --version
+if [[ ! -d "$VENV" ]]; then
+  "$PYTHON" -m venv "$VENV"
+fi
+
+"$VENV/bin/python" -m pip install --upgrade pip
+"$VENV/bin/python" -m pip install --upgrade httpx biopython matplotlib python-dotenv
+
+# The source tree uses a src/ layout. A .pth file avoids installing the full project
+# dependency set (notably PyTorch) into the lightweight Passenger environment.
+SITE_PACKAGES="$($VENV/bin/python -c 'import site; print(site.getsitepackages()[0])')"
+printf '%s\n' "$ROOT/src" > "$SITE_PACKAGES/protein_queries.pth"
+
+"$VENV/bin/python" - <<'PY'
+import Bio
+import httpx
+import matplotlib
+import protein_agent
+print("Passenger lightweight environment is ready")
+PY
