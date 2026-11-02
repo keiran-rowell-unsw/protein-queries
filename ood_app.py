@@ -19,11 +19,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs
 
 HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
@@ -70,7 +67,7 @@ def page(prefix, csrf, message=""):
 .panel{padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.9);box-shadow:0 24px 70px rgba(30,64,175,.12);backdrop-filter:blur(12px)}form{display:grid;gap:1.25rem}.field{display:grid;gap:.45rem}label{font-weight:700}.hint{color:var(--muted);font-size:.88rem}input,textarea{width:100%%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;padding:.8rem .9rem;transition:border-color .15s,box-shadow .15s}textarea{min-height:13rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9rem}input:focus,textarea:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 4px rgba(8,145,178,.13)}button{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(14,116,144,.22)}button:hover{filter:brightness(1.06)}[role=alert]{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
-<div class="field"><label for="accession">UniProt accession</label><span class="hint">Recommended when you know it.</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
+<div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="[A-Za-z0-9]{6,10}(-[0-9]{1,2})?"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Optional with an accession. FASTA and bare sequences are accepted.</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Generate report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
@@ -168,52 +165,40 @@ def validate_sequence(text):
 
 
 def run_report(sequence, folder, accession=""):
-    """Run the report locally or through SSH, using only generated filesystem paths."""
-    if EXECUTION_MODE not in {"local", "ssh"}:
-        raise RuntimeError("PROTEIN_REPORT_EXECUTION must be 'local' or 'ssh'")
-    if EXECUTION_MODE == "ssh" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", HOST):
-        raise RuntimeError("invalid SSH host configuration")
+    """Run sequence-only calculations in the Passenger user's local environment."""
+    if EXECUTION_MODE != "local":
+        raise RuntimeError("preliminary reports must run locally; SSH/login nodes are disabled")
     if not PROJECT.startswith("/"):
         raise RuntimeError("project path must be absolute")
     source = folder / "input.fasta"
     source.write_text(sequence, encoding="utf-8")
-    try:
-        args = [PROJECT + "/.venv/bin/python", "-m", "protein_agent.report",
-                "--input", str(source), "--output", str(folder), "--lightweight"]
-        if accession:
-            args.extend(["--accession", accession])
-        if EXECUTION_MODE == "local":
-            command = args
-        else:
-            command = [
-                "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-                "-o", "ConnectTimeout=8", HOST, shlex.join(args),
-            ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=90,
-            check=False,
+    args = [PROJECT + "/.venv/bin/python", "-m", "protein_agent.report",
+            "--input", str(source), "--output", str(folder), "--lightweight"]
+    if accession:
+        args.extend(["--accession", accession])
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if result.returncode != 0 or not (folder / "report.html").is_file():
+        global LAST_REPORT_ERROR
+        LAST_REPORT_ERROR = {
+            "mode": EXECUTION_MODE,
+            "python": args[0],
+            "returncode": result.returncode,
+            "stderr": (result.stderr or "").strip()[-4_000:],
+        }
+        LOGGER.error(
+            "report subprocess failed: mode=%s python=%s returncode=%s stderr=%s",
+            EXECUTION_MODE,
+            args[0],
+            result.returncode,
+            (result.stderr or "").strip()[-4_000:],
         )
-        if result.returncode != 0 or not (folder / "report.html").is_file():
-            global LAST_REPORT_ERROR
-            LAST_REPORT_ERROR = {
-                "mode": EXECUTION_MODE,
-                "python": args[0],
-                "returncode": result.returncode,
-                "stderr": (result.stderr or "").strip()[-4_000:],
-            }
-            LOGGER.error(
-                "report subprocess failed: mode=%s python=%s returncode=%s stderr=%s",
-                EXECUTION_MODE,
-                args[0],
-                result.returncode,
-                (result.stderr or "").strip()[-4_000:],
-            )
-            raise RuntimeError("lightweight report subprocess failed; check the Passenger project environment")
-    finally:
-        source.unlink(missing_ok=True)
+        raise RuntimeError("lightweight report subprocess failed; check the Passenger project environment")
 
 
 def _write_json(path, payload):
@@ -257,6 +242,7 @@ def submit_extended_analysis(folder):
     if isinstance(accession, str) and accession:
         command.extend(["--accession", accession])
     script = folder / ".extended.pbs"
+    reservation = folder / ".extend-reserved"
     job_json = str(job_path)
     script.write_text(
         "#!/bin/bash\n"
@@ -269,14 +255,15 @@ def submit_extended_analysis(folder):
         f"printf '%s\\n' '{{\"status\":\"running\"}}' > {shlex.quote(job_json)}\n"
         f"if {shlex.join(command)}; then\n"
         f"  printf '%s\\n' '{{\"status\":\"complete\"}}' > {shlex.quote(job_json)}\n"
+        f"  rm -f -- {shlex.quote(str(reservation))}\n"
         "else\n"
         f"  printf '%s\\n' '{{\"status\":\"failed\"}}' > {shlex.quote(job_json)}\n"
+        f"  rm -f -- {shlex.quote(str(reservation))}\n"
         "  exit 1\n"
         "fi\n",
         encoding="utf-8",
     )
     script.chmod(0o700)
-    reservation = folder / ".extend-reserved"
     try:
         fd = os.open(reservation, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
@@ -294,8 +281,14 @@ def submit_extended_analysis(folder):
         if result.returncode != 0 or not result.stdout.strip():
             raise RuntimeError("extended analysis could not be queued")
         job_id = result.stdout.strip().splitlines()[0]
+        (folder / "job-id.txt").write_text(job_id + "\n", encoding="utf-8")
         payload = {"status": "queued", "job_id": job_id}
-        _write_json(job_path, payload)
+        # A very short job can already have written its final status before qsub returns.
+        current = {}
+        with contextlib.suppress(OSError, ValueError, TypeError):
+            current = json.loads(job_path.read_text(encoding="utf-8"))
+        if current.get("status") not in {"running", "complete", "failed"}:
+            _write_json(job_path, payload)
         return payload
     except Exception:
         reservation.unlink(missing_ok=True)
@@ -306,11 +299,20 @@ def pending_page(prefix, token, folder):
     job = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
-    status = html.escape(str(job.get("status") or "queued"))
+    status = str(job.get("status") or "queued")
+    if status in {"failed", "unavailable"}:
+        return (
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<title>Analysis unavailable</title></head><body><main>"
+            "<h1>Analysis unavailable</h1><p>No sequence was provided for a preliminary "
+            "report, and the compute job did not complete. Please submit again later.</p>"
+            f"<p><a href='{html.escape(prefix, quote=True)}/'>New report</a></p>"
+            "</main></body></html>"
+        )
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Analysis queued</title>"
         "<meta http-equiv='refresh' content='10'></head><body><main>"
-        f"<h1>Analysis queued</h1><p>Status: <strong>{status}</strong>.</p>"
+        f"<h1>Analysis queued</h1><p>Status: <strong>{html.escape(status)}</strong>.</p>"
         "<p>This page refreshes every 10 seconds. The report will appear when the PBS job completes.</p>"
         f"<p><a href='{html.escape(prefix, quote=True)}/results/{token}/report.html'>Refresh now</a></p>"
         "</main></body></html>"
@@ -326,9 +328,13 @@ def extended_card(prefix, token, folder, csrf):
             job = {"status": "unknown"}
         status = str(job.get("status") or "unknown")
         if status == "complete":
-            return '<div class="report-shell"><div class="note"><strong>Extended analysis complete.</strong> Refresh the report to see the Foldseek and predicted-disorder results.</div></div>'
-        return '<div class="report-shell"><div class="note"><strong>Extended analysis: %s.</strong> Refresh this page for status and results.</div></div>' % html.escape(status)
-    return '<div class="report-shell"><div class="note"><h2>Extended analysis</h2><p>Run metapredict, structural mapping, and Foldseek on a compute node.</p><form method="post" action="%s/results/%s/extend"><input type="hidden" name="csrf" value="%s"><button type="submit">Run extended analysis</button></form></div></div>' % (html.escape(prefix, quote=True), token, html.escape(csrf, quote=True))
+            return '<div class="report-shell"><div class="note"><strong>Enrichment complete.</strong> Refresh the report for UniProt and structural results.</div></div>'
+        if status not in {"failed", "unavailable"}:
+            return '<div class="report-shell"><div class="note"><strong>UniProt and structural enrichment: %s.</strong> Refresh this page for status and results.</div></div>' % html.escape(status)
+        message = "Enrichment was not completed; the preliminary report remains valid for the submitted sequence. Retry when the compute service is available."
+    else:
+        message = "UniProt and structural enrichment was not queued. Retry on a compute node."
+    return '<div class="report-shell"><div class="note"><p>%s</p><form method="post" action="%s/results/%s/extend"><input type="hidden" name="csrf" value="%s"><button type="submit">Retry enrichment</button></form></div></div>' % (html.escape(message), html.escape(prefix, quote=True), token, html.escape(csrf, quote=True))
 
 
 def application(environ, start_response):
@@ -341,27 +347,9 @@ def application(environ, start_response):
         report_check = {"version": None, "protein_agent_import": False, "error": None}
         uniprot_check = {
             "url": UNIPROT_BASE_URL,
-            "reachable": False,
-            "status": None,
-            "elapsed_seconds": None,
-            "error": None,
+            "status": "deferred_to_compute_job",
+            "reason": "The Passenger worker does not contact UniProt.",
         }
-        probe = UNIPROT_BASE_URL + "/uniprotkb/search?" + urlencode({
-            "query": "reviewed:true", "size": "1", "format": "json",
-        })
-        started = time.monotonic()
-        try:
-            with urllib.request.urlopen(probe, timeout=8) as response:
-                uniprot_check.update(
-                    reachable=True,
-                    status=response.status,
-                    elapsed_seconds=round(time.monotonic() - started, 3),
-                )
-        except (OSError, urllib.error.URLError, ValueError) as exc:
-            uniprot_check.update(
-                elapsed_seconds=round(time.monotonic() - started, 3),
-                error=str(exc)[:500],
-            )
         if report_python.is_file():
             try:
                 checked = subprocess.run(
@@ -505,9 +493,9 @@ def application(environ, start_response):
                 raise ValueError("sequence input exceeds 100 KB")
             if not text.strip() and not accession:
                 raise ValueError("provide either a protein sequence or a UniProt accession")
-            if text.strip() and not accession:
+            if text.strip():
                 validate_sequence(text)
-            # The remote parser rechecks the same input before computation.
+            # Both the local and compute-node parsers recheck the submitted sequence.
             token = secrets.token_hex(16)
             ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
             folder = ROOT / token
@@ -515,10 +503,19 @@ def application(environ, start_response):
             try:
                 (folder / "input.fasta").write_text(text, encoding="utf-8")
                 _write_json(folder / "request.json", {"accession": accession})
-                if accession:
-                    submit_extended_analysis(folder)
-                else:
+                if text.strip():
+                    # Biopython-only provisional report: no network, UniProt, or structure work.
                     run_report(text, folder, accession)
+                try:
+                    # Enrichment, including UniProt identity, runs on a compute node.
+                    submit_extended_analysis(folder)
+                except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                    if not text.strip():
+                        raise  # accession-only input cannot have a local sequence report
+                    _write_json(folder / "job.json", {
+                        "status": "unavailable",
+                        "reason": "Compute enrichment could not be queued. The preliminary report remains available.",
+                    })
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 shutil.rmtree(folder)
                 raise
@@ -591,5 +588,9 @@ def application(environ, start_response):
                 headers = []
                 if parts[3] == "report.html":
                     headers.append(("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; SameSite=Strict" % (csrf, prefix + "/")))
+                    with contextlib.suppress(OSError, ValueError, TypeError):
+                        job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
+                        if job.get("status") in {"queued", "running"}:
+                            headers.append(("Refresh", "10"))
                 return respond(start_response, "200 OK", body, FILES[parts[3]], headers=headers)
     return respond(start_response, "404 Not Found", "Not found")

@@ -66,11 +66,19 @@ For a local test only:
 The repository root contains `manifest.yml` and `passenger_wsgi.py`, so it can be cloned
 as a **per-user OOD Python Passenger app**. `ood_app.py` is the dependency-free WSGI front
 end. It accepts a sequence or UniProt accession in the user's authenticated PUN, stores it
-in the private `~/ondemand/data/protein-queries/reports/<random-id>/` directory, and runs
-a lightweight sequence report with the configured project virtual environment. Accession
-submissions are queued directly because UniProt access is not assumed on the PUN. The
-extended-analysis button submits a PBS job for UniProt, metapredict, structural retrieval,
-and Foldseek; those heavier steps run on an allocated compute node rather than the PUN.
+in the private `~/ondemand/data/protein-queries/reports/<random-id>/` directory. When a
+sequence is supplied, the PUN immediately produces a **preliminary, sequence-only**
+Biopython report (with local plots) without calling UniProt, PDBe, Foldseek or ResTech.
+It then automatically submits a PBS job to verify UniProt identity and regenerate the
+report with annotations, metapredict, structural retrieval and Foldseek on a compute node.
+If only an accession is supplied, there is no sequence to calculate from locally: the
+app shows a pending page while the compute job fetches the canonical sequence. When both
+are supplied, the preliminary report uses the submitted sequence; the compute job verifies
+the accession and may replace its calculations with the canonical sequence, explicitly
+noting a mismatch. A failed job submission leaves the preliminary sequence report intact
+and offers a retry; it must not masquerade as complete enrichment. Queued reports
+refresh automatically while the job is running. The PBS job ID is retained in the
+private report directory as `job-id.txt` for scheduler accounting.
 
 ```bash
 cd ~/ondemand/dev
@@ -95,8 +103,9 @@ now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
 `PROTEIN_REPORT_EXTENDED_PYTHON` to the absolute path of a compute-node environment
 containing metapredict/PyTorch before enabling the extended-analysis button; the
 lightweight Passenger environment is deliberately not used for that job.
-The legacy `PROTEIN_REPORT_EXECUTION=ssh` mode remains available for testing, but is not
-recommended for deployment. Results persist until manually removed, so establish a
+`PROTEIN_REPORT_EXECUTION=local` is the intended PUN configuration; never target a login
+node for these computations. Running even lightweight Biopython calculations on the OOD
+host requires site approval. Results persist until manually removed, so establish a
 retention policy. These prerequisites have **not** been verified from the separate OOD
 host. OOD serves this app under its authenticated PUN;
 do not expose the separate `protein_agent.web` prototype to researchers, since it has no

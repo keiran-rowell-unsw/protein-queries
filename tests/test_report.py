@@ -74,6 +74,29 @@ def test_report_is_complete_and_escapes_header(tmp_path):
     assert not (path.parent / "disorder.png").exists()
 
 
+def test_lightweight_report_does_not_retrieve_even_with_accession(monkeypatch, tmp_path):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("preliminary report tried to call a remote service")
+
+    for name in ("fetch_annotations", "find_sequence_annotations", "fetch_pdbe_structures",
+                 "run_foldseek_search", "predict_disorder"):
+        monkeypatch.setattr("protein_agent.report." + name, forbidden)
+    source = tmp_path / "sequence.fa"
+    source.write_text(">submitted\nACDEFGHIKLMNPQRSTVWY\n")
+    path = generate_report(
+        source, tmp_path / "preliminary", accession="Q12345",
+        run_foldseek=True, lightweight=True,
+    )
+    data = json.loads((path.parent / "report.json").read_text())
+    assert data["uniprot"]["status"] == "not_requested"
+    assert data["uniprot"]["requested_accession"] == "Q12345"
+    assert data["pdbe"]["status"] == "not_requested"
+    assert data["foldseek"]["status"] == "not_requested"
+    assert data["length_residues"] == 20
+    assert "Preliminary sequence-only report" in path.read_text()
+    assert "No accession was supplied" not in path.read_text()
+
+
 def test_accession_only_uses_canonical_sequence(monkeypatch, tmp_path):
     canonical = "ACDEFGHIKLMNPQRSTVWY"
     monkeypatch.setattr(
