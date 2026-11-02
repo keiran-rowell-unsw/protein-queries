@@ -24,6 +24,7 @@ HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
 EXECUTION_MODE = os.environ.get("PROTEIN_REPORT_EXECUTION", "local").strip().lower()
 PBS_SUBMIT_COMMAND = os.environ.get("PBS_SUBMIT_COMMAND", "qsub")
+EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
@@ -218,7 +219,9 @@ def submit_extended_analysis(folder):
     request = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
-    python = PROJECT + "/.venv/bin/python"
+    python = EXTENDED_PYTHON or (PROJECT + "/.venv/bin/python")
+    if not python.startswith("/"):
+        raise RuntimeError("extended Python path must be absolute")
     command = [
         python, "-m", "protein_agent.report", "--input", str(folder / "input.fasta"),
         "--output", str(folder), "--foldseek",

@@ -89,7 +89,9 @@ from the OOD dashboard if Passenger still runs an older version. The OOD/PUN hos
 installation, clone the project into the user's OOD app directory and create `.venv`
 there; the app now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
 `PROTEIN_REPORT_PROJECT` only when using a shared installation, and set
-`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path.
+`PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path. Set
+`PROTEIN_REPORT_EXTENDED_PYTHON` to a separate compute-node environment containing
+metapredict/PyTorch if the lightweight Passenger environment does not include them.
 The legacy `PROTEIN_REPORT_EXECUTION=ssh` mode remains available for testing, but is not
 recommended for deployment. Results persist until manually removed, so establish a
 retention policy. These prerequisites have **not** been verified from the separate OOD
