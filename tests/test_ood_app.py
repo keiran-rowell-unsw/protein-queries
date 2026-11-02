@@ -180,6 +180,7 @@ def test_extended_analysis_submits_pbs_script(monkeypatch, tmp_path):
         seen["args"] = args
         return SimpleNamespace(returncode=0, stdout="123.server\n")
 
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
     monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
     result = ood_app.submit_extended_analysis(folder)
     assert result == {"status": "queued", "job_id": "123.server"}

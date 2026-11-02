@@ -91,8 +91,9 @@ installation, clone the project into the user's OOD app directory and run
 now defaults `PROTEIN_REPORT_PROJECT` to its own directory. Set
 `PROTEIN_REPORT_PROJECT` only when using a shared installation, and set
 `PBS_SUBMIT_COMMAND` if the site uses a non-default qsub path. Set
-`PROTEIN_REPORT_EXTENDED_PYTHON` to a separate compute-node environment containing
-metapredict/PyTorch if the lightweight Passenger environment does not include them.
+`PROTEIN_REPORT_EXTENDED_PYTHON` to the absolute path of a compute-node environment
+containing metapredict/PyTorch before enabling the extended-analysis button; the
+lightweight Passenger environment is deliberately not used for that job.
 The legacy `PROTEIN_REPORT_EXECUTION=ssh` mode remains available for testing, but is not
 recommended for deployment. Results persist until manually removed, so establish a
 retention policy. These prerequisites have **not** been verified from the separate OOD

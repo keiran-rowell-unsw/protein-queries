@@ -220,7 +220,11 @@ def submit_extended_analysis(folder):
     request = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
-    python = EXTENDED_PYTHON or (PROJECT + "/.venv/bin/python")
+    if not EXTENDED_PYTHON:
+        raise RuntimeError(
+            "set PROTEIN_REPORT_EXTENDED_PYTHON before submitting extended analysis"
+        )
+    python = EXTENDED_PYTHON
     if not python.startswith("/"):
         raise RuntimeError("extended Python path must be absolute")
     command = [
