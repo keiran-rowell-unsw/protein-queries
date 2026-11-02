@@ -61,14 +61,15 @@ For a local test only:
 .venv/bin/python -m protein_agent.report --output results --accession YOUR_ACCESSION
 ```
 
-### Open OnDemand Passenger app (no PBS queue)
+### Open OnDemand Passenger app with optional PBS enrichment
 
 The repository root contains `manifest.yml` and `passenger_wsgi.py`, so it can be cloned
 as a **per-user OOD Python Passenger app**. `ood_app.py` is the dependency-free WSGI front
-end. It accepts a sequence in the user's authenticated PUN, stores it in the private
-`~/ondemand/data/protein-queries/reports/<random-id>/` directory, and runs a lightweight
-report with the configured project virtual environment. The report page offers an
-extended-analysis button that submits a PBS job for metapredict, structural retrieval,
+end. It accepts a sequence or UniProt accession in the user's authenticated PUN, stores it
+in the private `~/ondemand/data/protein-queries/reports/<random-id>/` directory, and runs
+a lightweight sequence report with the configured project virtual environment. Accession
+submissions are queued directly because UniProt access is not assumed on the PUN. The
+extended-analysis button submits a PBS job for UniProt, metapredict, structural retrieval,
 and Foldseek; those heavier steps run on an allocated compute node rather than the PUN.
 
 ```bash

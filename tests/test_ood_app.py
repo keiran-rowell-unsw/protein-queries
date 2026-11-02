@@ -81,22 +81,23 @@ def test_session_prefix_csrf_and_report(monkeypatch, tmp_path):
     )
 
 
-def test_accession_only_submission_is_accepted(monkeypatch, tmp_path):
+def test_accession_only_submission_is_queued(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
     captured = {}
 
-    def fake_report(text, folder, accession=""):
-        captured.update(text=text, accession=accession)
-        (folder / "report.html").write_text("generated")
+    def fake_queue(folder):
+        captured["request"] = json.loads((folder / "request.json").read_text())
+        (folder / "job.json").write_text('{"status":"queued","job_id":"123.server"}')
+        return {"status": "queued", "job_id": "123.server"}
 
-    monkeypatch.setattr(ood_app, "run_report", fake_report)
+    monkeypatch.setattr(ood_app, "submit_extended_analysis", fake_queue)
     form = request("GET", "/")
     cookie = form["headers"]["Set-Cookie"]
     token = cookie.split(";", 1)[0].split("=", 1)[1]
     params = {"csrf": token, "accession": "Q12345"}
     result = request("POST", "/run", body=urlencode(params).encode(), cookie=cookie)
     assert result["status"] == "303 See Other"
-    assert captured == {"text": "", "accession": "Q12345"}
+    assert captured == {"request": {"accession": "Q12345"}}
 
 
 def test_report_chat_is_temporarily_disabled(tmp_path):

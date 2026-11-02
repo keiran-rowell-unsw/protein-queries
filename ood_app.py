@@ -302,6 +302,21 @@ def submit_extended_analysis(folder):
         raise
 
 
+def pending_page(prefix, token, folder):
+    job = {}
+    with contextlib.suppress(OSError, ValueError, TypeError):
+        job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
+    status = html.escape(str(job.get("status") or "queued"))
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Analysis queued</title>"
+        "<meta http-equiv='refresh' content='10'></head><body><main>"
+        f"<h1>Analysis queued</h1><p>Status: <strong>{status}</strong>.</p>"
+        "<p>This page refreshes every 10 seconds. The report will appear when the PBS job completes.</p>"
+        f"<p><a href='{html.escape(prefix, quote=True)}/results/{token}/report.html'>Refresh now</a></p>"
+        "</main></body></html>"
+    )
+
+
 def extended_card(prefix, token, folder, csrf):
     job_path = folder / "job.json"
     if job_path.is_file():
@@ -498,9 +513,12 @@ def application(environ, start_response):
             folder = ROOT / token
             folder.mkdir(mode=0o700)
             try:
-                run_report(text, folder, accession)
                 (folder / "input.fasta").write_text(text, encoding="utf-8")
                 _write_json(folder / "request.json", {"accession": accession})
+                if accession:
+                    submit_extended_analysis(folder)
+                else:
+                    run_report(text, folder, accession)
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 shutil.rmtree(folder)
                 raise
@@ -553,7 +571,10 @@ def application(environ, start_response):
     if method == "GET" and path.startswith("/results/"):
         parts = path.split("/")
         if len(parts) == 4 and TOKEN.fullmatch(parts[2]) and parts[3] in FILES:
-            result = ROOT / parts[2] / parts[3]
+            folder = ROOT / parts[2]
+            result = folder / parts[3]
+            if parts[3] == "report.html" and not result.is_file() and (folder / "job.json").is_file():
+                return respond(start_response, "200 OK", pending_page(prefix, parts[2], folder))
             if result.is_file():
                 body = result.read_bytes()
                 csrf = secrets.token_hex(16)
