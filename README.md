@@ -99,9 +99,12 @@ Deployment prerequisites:
 - Passenger needs Python 3.11 or newer, but not the scientific dependencies.
 - The project clone and report directory must be visible at the same paths on the
   PUN and compute nodes.
-- Set `PROTEIN_REPORT_EXTENDED_PYTHON` to a maintained compute Python, or create
+- Set `PROTEIN_REPORT_EXTENDED_PYTHON` to a maintained compute Python. For a central
+  `/sys` installation, the administrator should provide this shared environment and
+  configure the path; users do not need to run the setup script. Otherwise, create
   `<project>/.compute-venv` once on an allocated compute node with
-  `bin/setup-compute-env`.
+  `bin/setup-compute-env`. The script provisions and validates the environment; it is
+  not run during Passenger requests or on login nodes.
 - Set `PBS_SUBMIT_COMMAND` only when `qsub` is not discoverable.
 - Establish a retention policy; reports are not automatically deleted.
 
@@ -119,7 +122,11 @@ configure site policy before allowing external addresses. The email address is
 kept in the private request directory and is not put in the report URL.
 
 No dependency installation occurs during a web request or report job. Restart the
-PUN after changing code or environment configuration. The separate
+PUN after changing code or environment configuration. This is a normal queued PBS
+application, not a Batch Connect app: it does not request or hold an interactive
+session. Each submission is one short-lived PBS job, and the Passenger page serves
+its static result after completion. Batch Connect is appropriate for interactive
+notebooks, shells, or applications that need a persistent allocation. The separate
 `protein_agent.web` prototype has no authentication and is not the OOD deployment.
 
 ## Report-backed Foldseek path
