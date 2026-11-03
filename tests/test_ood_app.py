@@ -228,7 +228,7 @@ def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     assert "#PBS -N protein-report" in script
     assert "--foldseek" in script and "--accession Q12345" in script
     assert "--lightweight" not in script and "ssh" not in script
-    assert "#PBS -l ncpus=2" in script and "#PBS -l mem=4gb" in script
+    assert "#PBS -l ncpus=1" in script and "#PBS -l mem=4gb" in script
     assert "#PBS -m abe" in script
 
 

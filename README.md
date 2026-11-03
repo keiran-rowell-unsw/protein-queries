@@ -106,7 +106,8 @@ Deployment prerequisites:
   `bin/setup-compute-env`. The script provisions and validates the environment; it is
   not run during Passenger requests or on login nodes.
 - Set `PBS_SUBMIT_COMMAND` only when `qsub` is not discoverable.
-- Establish a retention policy; reports are not automatically deleted.
+- Configure a 90-day retention cleanup for report directories; automatic deletion is
+  an administrator deployment task and is not performed during web requests.
 
 ### Email delivery
 

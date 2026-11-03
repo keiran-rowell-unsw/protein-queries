@@ -149,7 +149,7 @@ def submit_report_job(folder):
         "#!/bin/bash\n"
         "#PBS -N protein-report\n"
         "#PBS -l walltime=00:20:00\n"
-        "#PBS -l ncpus=2\n"
+        "#PBS -l ncpus=1\n"
         "#PBS -l mem=4gb\n"
         "#PBS -m abe\n"
         "set -u\n"
