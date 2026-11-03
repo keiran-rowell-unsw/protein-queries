@@ -32,6 +32,7 @@ OOD_ACTIVE_JOBS_URL = os.environ.get(
     "OOD_ACTIVE_JOBS_URL", "/pun/sys/dashboard/activejobs"
 )
 REPORT_EMAIL = os.environ.get("PROTEIN_REPORT_EMAIL", "").strip()
+EMAIL_RE = re.compile(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+\Z")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
@@ -70,6 +71,7 @@ def page(prefix, csrf, message=""):
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
 <div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"></div>
+<div class="field"><label for="email">Email report (optional)</label><span class="hint">We will send the completed HTML and JSON report as attachments.</span><input id="email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.edu"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Queue report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
@@ -200,9 +202,10 @@ def submit_report_job(folder):
     request = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
+    report_email = str(request.get("email") or REPORT_EMAIL).strip()
+    if report_email and not EMAIL_RE.fullmatch(report_email):
+        raise RuntimeError("report email is not a valid address")
     python = EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON
-    if REPORT_EMAIL and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", REPORT_EMAIL):
-        raise RuntimeError("PROTEIN_REPORT_EMAIL is not a valid address")
     if not python.startswith("/"):
         raise RuntimeError("extended Python path must be absolute")
     if not EXTENDED_PYTHON and not Path(python).is_file():
@@ -232,9 +235,9 @@ def submit_report_job(folder):
         + (
             "  " + shlex.join([
                 python, "-m", "protein_agent.mail_report", "--report-dir", str(folder),
-                "--recipient", REPORT_EMAIL,
+                "--recipient", report_email,
             ]) + " || true\n"
-            if REPORT_EMAIL else ""
+            if report_email else ""
         )
         + f"  printf '%s\\n' '{{\"status\":\"complete\"}}' > {shlex.quote(job_json)}\n"
         f"  rm -f -- {shlex.quote(str(reservation))}\n"
@@ -255,7 +258,7 @@ def submit_report_job(folder):
         result = subprocess.run(
             [
                 PBS_SUBMIT_COMMAND,
-                *(('-M', REPORT_EMAIL) if REPORT_EMAIL else ()),
+                *(('-M', report_email) if report_email else ()),
                 "-o", str(folder / "job.log"),
                 "-j", "oe",
                 str(script),
@@ -450,12 +453,16 @@ def application(environ, start_response):
             if (not TOKEN.fullmatch(stored) or len(submitted) != 1 or
                     not hmac.compare_digest(stored, submitted[0])):
                 return respond(start_response, "403 Forbidden", "Invalid form token. Reload the app.")
-            if (set(fields) - {"csrf", "sequence", "accession"}
+            if (set(fields) - {"csrf", "sequence", "accession", "email"}
                     or len(fields.get("sequence", [])) > 1
-                    or len(fields.get("accession", [])) > 1):
+                    or len(fields.get("accession", [])) > 1
+                    or len(fields.get("email", [])) > 1):
                 raise ValueError("submit at most one sequence and one accession")
             text = (fields.get("sequence") or [""])[0]
             accession = (fields.get("accession") or [""])[0].strip().upper()
+            email = (fields.get("email") or [""])[0].strip()
+            if email and not EMAIL_RE.fullmatch(email):
+                raise ValueError("invalid email address")
             if accession and not re.fullmatch(
                 r"(?:[A-Z0-9]{6}|[A-Z0-9]{10})(?:-[0-9]{1,2})?", accession
             ):
@@ -473,7 +480,10 @@ def application(environ, start_response):
             folder.mkdir(mode=0o700)
             try:
                 (folder / "input.fasta").write_text(text, encoding="utf-8")
-                _write_json(folder / "request.json", {"accession": accession})
+                request = {"accession": accession}
+                if email:
+                    request["email"] = email
+                _write_json(folder / "request.json", request)
                 submit_report_job(folder)
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
                 shutil.rmtree(folder)

@@ -97,6 +97,25 @@ def test_every_submission_queues_without_local_report(
     assert b"<style>" in pending["body"]
 
 
+def test_submission_retains_optional_email(monkeypatch, tmp_path):
+    monkeypatch.setattr(ood_app, "ROOT", tmp_path)
+    monkeypatch.setattr(ood_app, "submit_report_job", lambda _folder: {"status": "queued"})
+    _form, cookie, csrf = form_cookie()
+    response = request(
+        "POST", "/run",
+        body=urlencode({
+            "csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY",
+            "email": "user@example.edu",
+        }).encode(),
+        cookie=cookie,
+    )
+    assert response["status"] == "303 See Other"
+    folder = next(tmp_path.iterdir())
+    assert json.loads((folder / "request.json").read_text()) == {
+        "accession": "", "email": "user@example.edu"
+    }
+
+
 def test_submission_failure_removes_partial_request(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
     monkeypatch.setattr(
