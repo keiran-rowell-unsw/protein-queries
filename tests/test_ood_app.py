@@ -65,6 +65,7 @@ def test_every_submission_queues_without_local_report(
     monkeypatch, tmp_path, sequence, accession
 ):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
+    monkeypatch.setattr(ood_app, "PBS_STATUS_COMMAND", "/definitely/missing/qstat")
     observed = {}
 
     def fake_submit(folder):
@@ -95,6 +96,36 @@ def test_every_submission_queues_without_local_report(
     assert b"/pun/sys/dashboard/activejobs" in pending["body"]
     assert b"OOD Active Jobs" in pending["body"]
     assert b"<style>" in pending["body"]
+
+
+def test_reconcile_pbs_status_marks_disappeared_job_unavailable(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    job = {"status": "running", "job_id": "123.server"}
+    monkeypatch.setattr(ood_app, "PBS_STATUS_COMMAND", "/usr/bin/qstat")
+    monkeypatch.setattr(ood_app.Path, "is_file", lambda self: str(self) == "/usr/bin/qstat")
+    monkeypatch.setattr(ood_app.os, "access", lambda *_args: True)
+    monkeypatch.setattr(
+        ood_app.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=153, stdout=""),
+    )
+    result = ood_app.reconcile_pbs_status(folder, job)
+    assert result["status"] == "unavailable"
+    assert "no longer reports" in result["reason"]
+
+
+def test_reconcile_pbs_status_maps_scheduler_state(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    monkeypatch.setattr(ood_app, "PBS_STATUS_COMMAND", "/usr/bin/qstat")
+    monkeypatch.setattr(ood_app.Path, "is_file", lambda _self: True)
+    monkeypatch.setattr(ood_app.os, "access", lambda *_args: True)
+    monkeypatch.setattr(
+        ood_app.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="job_state = R\n"),
+    )
+    result = ood_app.reconcile_pbs_status(folder, {"status": "queued", "job_id": "123.server"})
+    assert result["status"] == "running"
 
 
 def test_submission_retains_optional_email(monkeypatch, tmp_path):

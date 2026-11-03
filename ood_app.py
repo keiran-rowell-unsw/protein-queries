@@ -296,6 +296,11 @@ def reconcile_pbs_status(folder, job):
     job_id = str(job.get("job_id") or "").strip()
     if not job_id:
         return job
+    status_command = Path(PBS_STATUS_COMMAND)
+    if status_command.is_absolute() and (
+        not status_command.is_file() or not os.access(status_command, os.X_OK)
+    ):
+        return job
     try:
         result = subprocess.run(
             [PBS_STATUS_COMMAND, "-f", job_id],
