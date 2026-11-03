@@ -43,7 +43,10 @@ FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/
          "hydropathy.png": "image/png", "disorder.png": "image/png",
          "positions.png": "image/png", "structure.png": "image/png",
          "ligands.png": "image/png"}
-CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'"
+ASSETS = {"lookup.js": "application/javascript; charset=utf-8"}
+UNIPROT_ORIGIN = "https://rest.uniprot.org"
+CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+       "script-src 'self'; connect-src " + UNIPROT_ORIGIN + "; form-action 'self'")
 
 
 def respond(start_response, code, body, content_type="text/html; charset=utf-8", headers=()):
@@ -68,11 +71,11 @@ def page(prefix, csrf, message=""):
 .panel{padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.9);box-shadow:0 24px 70px rgba(30,64,175,.12);backdrop-filter:blur(12px)}form{display:grid;gap:1.25rem}.field{display:grid;gap:.45rem}label{font-weight:700}.hint{color:var(--muted);font-size:.88rem}input,textarea{width:100%%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;padding:.8rem .9rem;transition:border-color .15s,box-shadow .15s}textarea{min-height:13rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9rem}input:focus,textarea:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 4px rgba(8,145,178,.13)}button{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(14,116,144,.22)}button:hover{filter:brightness(1.06)}[role=alert]{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
-<div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"></div>
+<div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results. The browser shows a preliminary identity below while the full report is queued.</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"><div id="lookup" aria-live="polite"></div></div>
 <div class="field"><label for="email">Email report (optional)</label><span class="hint">We will send the completed HTML and JSON report as attachments.</span><input id="email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@unsw.edu.au"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Queue report</button>
-</form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
+</form></main></div><script src="%s/lookup.js" defer></script></body></html>""" % (message, prefix, html.escape(csrf, quote=True), prefix)
 
 
 def validate_sequence(text):
@@ -301,6 +304,11 @@ def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/")
     prefix = environ.get("SCRIPT_NAME", "").rstrip("/")
+    if method == "GET" and path.lstrip("/") in ASSETS:
+        asset = Path(PROJECT) / "assets" / path.lstrip("/")
+        if not asset.is_file():
+            return respond(start_response, "404 Not Found", "Not found")
+        return respond(start_response, "200 OK", asset.read_bytes(), ASSETS[path.lstrip("/")])
     if method == "GET" and path in {"/health", "/__health"}:
         compute_python = EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON
         payload = {

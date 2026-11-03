@@ -86,6 +86,18 @@ Deployment prerequisites:
 - Configure a 90-day retention cleanup for report directories; automatic deletion is
   an administrator deployment task and is not performed during web requests.
 
+### Immediate browser identity lookup
+
+The submission page performs a preliminary lookup in the user’s browser: it fetches
+the public UniProt record for a typed accession directly from
+`rest.uniprot.org` (cross-origin requests are permitted) and shows the resolved
+protein name, organism, length, and review status before the job is queued. The
+app’s Content Security Policy permits this one endpoint only (`connect-src
+https://rest.uniprot.org`), the fetched record is rendered with text-safe DOM
+APIs, and no retrieval runs on the OOD host. The lookup is a convenience: it may
+be blocked by browser or network policy, and the queued PBS job remains the
+authoritative, sequence-verified report.
+
 ### Email delivery
 
 The form has an optional email field. When supplied, the completed `report.html`

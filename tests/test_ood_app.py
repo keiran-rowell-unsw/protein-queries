@@ -51,6 +51,18 @@ def test_manifest_wsgi_and_form_describe_queued_reports():
     assert b"Queues a full report job" in form["body"]
     assert b"maximum 5,000 residues" in form["body"]
     assert b"Queue report" in form["body"]
+    assert b"lookup.js" in form["body"]
+    assert "connect-src https://rest.uniprot.org" in form["headers"]["Content-Security-Policy"]
+    assert "script-src 'self'" in form["headers"]["Content-Security-Policy"]
+
+
+def test_browser_lookup_asset_is_served_and_traversal_blocked():
+    served = request("GET", "/lookup.js")
+    assert served["status"] == "200 OK"
+    assert served["headers"]["Content-Type"].startswith("application/javascript")
+    assert b"rest.uniprot.org" in served["body"]
+    assert request("GET", "/missing.js")["status"] == "404 Not Found"
+    assert request("GET", "/../input.fasta")["status"] == "404 Not Found"
 
 
 @pytest.mark.parametrize(
