@@ -656,7 +656,9 @@ def _uniprot_section(record: dict) -> str:
         "<h2>UniProt annotations</h2>"
         + identity_statement
         + identity_details
+        + "<details><summary>Open detailed UniProt annotations</summary>"
         + annotation_sections
+        + "</details>"
     )
 
 
@@ -871,11 +873,11 @@ def render_html(data: dict, *, generated_at: str) -> str:
 <p>Exploratory E. coli inclusion-body composition flag: {expression_flag}. This simple
 sequence-only flag does not establish actual expression or solubility.</p></details>
 {motif_section}
-{_uniprot_section(data['uniprot'])}
 {render_structure_section(data)}
 {_pdbe_section(data['pdbe'])}
 {render_foldseek_section(data)}
 <details><summary>Predicted PTM motifs</summary>{render_motif_section(data)}</details>
+{_uniprot_section(data['uniprot'])}
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>

@@ -281,6 +281,8 @@ def test_local_web_serves_the_position_map_when_features_exist(monkeypatch, tmp_
     output_root = tmp_path / "mapped"
     output = output_root / token
     page = generate_report(None, output, accession="Q12345").read_text()
+    assert "Open detailed UniProt annotations" in page
+    assert page.index("Open detailed UniProt annotations") > page.index("Predicted PTM motifs")
     assert 'src="positions.png"' in page
     assert (output / "positions.png").is_file()
 
