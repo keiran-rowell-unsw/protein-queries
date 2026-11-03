@@ -30,7 +30,7 @@ def send_report(report_dir: Path, recipient: str) -> None:
         message.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
     subprocess.run(
         [sender, "-t", "-oi"], input=message.as_bytes(), check=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30,
     )
 
 

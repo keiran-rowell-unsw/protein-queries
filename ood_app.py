@@ -26,6 +26,9 @@ PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().
 PBS_SUBMIT_COMMAND = (
     os.environ.get("PBS_SUBMIT_COMMAND") or shutil.which("qsub") or "/opt/pbs/bin/qsub"
 )
+PBS_STATUS_COMMAND = (
+    os.environ.get("PBS_STATUS_COMMAND") or shutil.which("qstat") or "/opt/pbs/bin/qstat"
+)
 EXTENDED_PYTHON = os.environ.get("PROTEIN_REPORT_EXTENDED_PYTHON", "")
 DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
 OOD_ACTIVE_JOBS_URL = os.environ.get(
@@ -286,10 +289,49 @@ def submit_report_job(folder):
         raise
 
 
+def reconcile_pbs_status(folder, job):
+    """Reconcile an unfinished local status with PBS without doing report work."""
+    if job.get("status") not in {"queued", "running"}:
+        return job
+    job_id = str(job.get("job_id") or "").strip()
+    if not job_id:
+        return job
+    try:
+        result = subprocess.run(
+            [PBS_STATUS_COMMAND, "-f", job_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return job
+    if result.returncode == 0:
+        match = re.search(r"^\s*job_state\s*=\s*([A-Z])\s*$", result.stdout, re.MULTILINE)
+        if match:
+            state = match.group(1)
+            if state in {"R", "E", "H", "W", "T"}:
+                job["status"] = "running"
+            elif state == "Q":
+                job["status"] = "queued"
+            return job
+    if (folder / "report.html").is_file():
+        job["status"] = "complete"
+    else:
+        job.update({
+            "status": "unavailable",
+            "reason": "PBS no longer reports this job and no report was produced.",
+        })
+    _write_json(folder / "job.json", job)
+    return job
+
+
 def pending_page(prefix, token, folder):
     job = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
         job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
+    job = reconcile_pbs_status(folder, job)
     status = str(job.get("status") or "queued")
     job_id = str(job.get("job_id") or "")
     if not job_id:
