@@ -18,7 +18,7 @@ def test_send_report_builds_attachments_and_bounds_sendmail(monkeypatch, tmp_pat
 
     monkeypatch.setattr(mail_report.shutil, "which", lambda _name: str(sender))
     monkeypatch.setattr(mail_report.subprocess, "run", fake_run)
-    mail_report.send_report(tmp_path, "user@example.edu")
+    mail_report.send_report(tmp_path, "user@unsw.edu.au")
     assert seen["args"] == [str(sender), "-t", "-oi"]
     assert seen["kwargs"]["timeout"] == 30
     assert b"report.html" in seen["kwargs"]["input"]

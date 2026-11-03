@@ -136,14 +136,14 @@ def test_submission_retains_optional_email(monkeypatch, tmp_path):
         "POST", "/run",
         body=urlencode({
             "csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY",
-            "email": "user@example.edu",
+            "email": "user@unsw.edu.au",
         }).encode(),
         cookie=cookie,
     )
     assert response["status"] == "303 See Other"
     folder = next(tmp_path.iterdir())
     assert json.loads((folder / "request.json").read_text()) == {
-        "accession": "", "email": "user@example.edu"
+        "accession": "", "email": "user@unsw.edu.au"
     }
 
 
@@ -190,14 +190,14 @@ def test_report_email_is_optional_and_added_to_pbs_job(monkeypatch, tmp_path):
     folder.mkdir()
     (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
     monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
-    monkeypatch.setattr(ood_app, "REPORT_EMAIL", "requestor@example.edu")
+    monkeypatch.setattr(ood_app, "REPORT_EMAIL", "requestor@unsw.edu.au")
     monkeypatch.setattr(
         ood_app.subprocess, "run",
         lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout="123.server\n"),
     )
     ood_app.submit_report_job(folder)
     script = (folder / ".report.pbs").read_text()
-    assert "--recipient requestor@example.edu" in script
+    assert "--recipient requestor@unsw.edu.au" in script
     assert "-m abe" in script
 
 

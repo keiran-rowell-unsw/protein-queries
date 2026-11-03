@@ -69,7 +69,7 @@ def page(prefix, csrf, message=""):
 </style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
 %s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
 <div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"></div>
-<div class="field"><label for="email">Email report (optional)</label><span class="hint">We will send the completed HTML and JSON report as attachments.</span><input id="email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.edu"></div>
+<div class="field"><label for="email">Email report (optional)</label><span class="hint">We will send the completed HTML and JSON report as attachments.</span><input id="email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@unsw.edu.au"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Queue report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
