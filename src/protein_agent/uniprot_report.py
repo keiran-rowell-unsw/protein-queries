@@ -164,6 +164,11 @@ def fetch_annotations(
             ),
         }
     except (RetrievalError, httpx.HTTPError, ValueError, KeyError) as exc:
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 400:
+            return {
+                "status": "invalid",
+                "reason": "UniProt rejected this accession format.",
+            }
         if isinstance(exc, RetrievalError):
             if "404" in str(exc):
                 return {

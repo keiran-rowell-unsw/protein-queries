@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Run once on an allocated compute node, not on a login node or Passenger host.
+# Keep the full prediction/MCP environment separate from the small Passenger .venv.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -z "${PBS_JOBID:-}" ]]; then
+  echo 'Run setup inside a PBS compute allocation (PBS_JOBID is not set).' >&2
+  exit 1
+fi
+UV="${PROTEIN_UV_BIN:-}"
+if [[ -z "$UV" ]]; then
+  UV="$(command -v uv || true)"
+fi
+if [[ -z "$UV" && -x "$HOME/.local/bin/uv" ]]; then
+  UV="$HOME/.local/bin/uv"
+fi
+if [[ -z "$UV" || ! -x "$UV" ]]; then
+  echo 'uv is required on the compute node (or set PROTEIN_UV_BIN).' >&2
+  exit 1
+fi
+
+cd "$ROOT"
+# The committed lockfile pins the full project and CPU-only PyTorch index.
+UV_PROJECT_ENVIRONMENT="$ROOT/.compute-venv" "$UV" sync --locked --no-dev
+
+"$ROOT/.compute-venv/bin/python" - <<'PY'
+import importlib.metadata as metadata
+
+import metapredict
+import protein_agent.report
+import torch
+
+for package in ("biopython", "metapredict", "torch", "mcp", "pdbe-mcp-server"):
+    metadata.version(package)
+print(f"Compute-node report environment is ready (torch {torch.__version__})")
+PY

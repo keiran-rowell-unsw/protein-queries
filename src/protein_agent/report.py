@@ -34,7 +34,7 @@ from .report_sections import (
 from .uniprot_report import fetch_annotations, find_sequence_annotations
 
 MAX_INPUT_BYTES = 100_000
-MAX_RESIDUES = 10_000
+MAX_RESIDUES = 5_000
 
 
 def parse_sequence(text: str) -> tuple[str, str]:
@@ -53,7 +53,7 @@ def parse_sequence(text: str) -> tuple[str, str]:
         raise SequenceError("no residues found")
     sequence = "".join("".join(line.split()) for line in lines).upper()
     if len(sequence) > MAX_RESIDUES:
-        raise SequenceError("sequence exceeds the 10,000-residue limit")
+        raise SequenceError("sequence exceeds the 5,000-residue limit")
     invalid = sorted(set(sequence) - STANDARD_AA)
     if invalid:
         raise SequenceError(
@@ -506,8 +506,9 @@ def _uniprot_section(record: dict) -> str:
     """Display fetched fields only after an exact canonical-sequence match."""
     if record["status"] == "not_requested":
         return (
-            "<h2>UniProt annotations</h2><p>No accession was supplied. "
-            "To add annotations, enter a UniProt accession with your sequence.</p>"
+            "<h2>UniProt annotations</h2><p>"
+            + html.escape(record.get("reason") or "UniProt annotations were not requested.")
+            + " No accession or annotation has been verified in this preliminary report.</p>"
         )
     if record["status"] != "verified":
         candidates = record.get("candidates") or []
@@ -652,10 +653,11 @@ def _uniprot_section(record: dict) -> str:
             + "</p>"
         )
     return (
-        "<h2>UniProt annotations</h2>"
+        "<details><summary>UniProt annotations</summary>"
         + identity_statement
         + identity_details
         + annotation_sections
+        + "</details>"
     )
 
 
@@ -836,6 +838,13 @@ def render_html(data: dict, *, generated_at: str) -> str:
     )
     expression = data["inclusion_body_propensity"]
     expression_flag = "higher" if expression["class"] == "likely_insoluble" else "lower"
+    preliminary = (
+        '<div class="note"><strong>Preliminary sequence-only report.</strong> '
+        "UniProt identity, annotations, and structural results are pending compute-node "
+        "enrichment. If a supplied accession has a different canonical sequence, the "
+        "enriched report will analyse that canonical sequence instead.</div>"
+        if data["uniprot"].get("status") == "not_requested" else ""
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Protein analysis report</title><style>
@@ -843,6 +852,7 @@ def render_html(data: dict, *, generated_at: str) -> str:
 </style></head><body><header class="report-header"><div class="report-shell"><h1>Protein analysis report</h1>
 <p><strong>Analysed protein:</strong> {html.escape(data['header'])} · {data['length_residues']} residues</p>
 <p>Created {html.escape(generated_at)} UTC · <a href="../../">Analyse another protein</a></p></div></header><main class="report-shell">
+{preliminary}
 <h2>At a glance</h2><table>{''.join(rows)}</table>
 <h2>Hydropathy along the sequence</h2>
 <p>Positive values are more hydrophobic; negative values are more hydrophilic.</p>
@@ -862,11 +872,11 @@ def render_html(data: dict, *, generated_at: str) -> str:
 <p>Exploratory E. coli inclusion-body composition flag: {expression_flag}. This simple
 sequence-only flag does not establish actual expression or solubility.</p></details>
 {motif_section}
-{_uniprot_section(data['uniprot'])}
 {render_structure_section(data)}
 {_pdbe_section(data['pdbe'])}
 {render_foldseek_section(data)}
 <details><summary>Predicted PTM motifs</summary>{render_motif_section(data)}</details>
+{_uniprot_section(data['uniprot'])}
 <h2>Download all calculated results</h2>
 <p><a href="report.json" download>Download full results (JSON)</a> — includes additional
 composition statistics, disorder scores (if available), and calculation details.</p>
@@ -883,6 +893,7 @@ def generate_report(
     *,
     accession: str = "",
     run_foldseek: bool = False,
+    lightweight: bool = False,
 ) -> Path:
     raw_input = ""
     if input_path is not None:
@@ -891,7 +902,23 @@ def generate_report(
         raw_input = input_path.read_text(encoding="utf-8")
 
     accession = accession.strip().upper()
-    if accession:
+    if lightweight:
+        if not raw_input.strip():
+            raise SequenceError("an input sequence is required for a local-only preliminary report")
+        header, sequence = parse_sequence(raw_input)
+        uniprot = {
+            "status": "not_requested",
+            "reason": "UniProt identity and annotations are deferred to the compute job.",
+        }
+        if accession:
+            uniprot["requested_accession"] = accession
+        input_source = (
+            "user-supplied sequence; preliminary calculations only; "
+            "a supplied accession will take precedence after UniProt verification in the compute job"
+            if accession else
+            "user-supplied sequence; preliminary calculations only; identity pending compute job"
+        )
+    elif accession:
         uniprot = fetch_annotations("", accession, accession_precedence=True)
         if uniprot.get("status") != "verified":
             raise SequenceError(
@@ -935,20 +962,34 @@ def generate_report(
     data["input_source"] = input_source
     data["generated_at_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
     plot_hydropathy(sequence, label=header, out_path=output_dir / "hydropathy.png")
-    data["disorder_prediction"] = predict_disorder(sequence, output_dir / "disorder.png")
+    data["disorder_prediction"] = (
+        {
+            "status": "skipped",
+            "reason": "Deferred to extended analysis; lightweight Passenger report requested.",
+        }
+        if lightweight
+        else predict_disorder(sequence, output_dir / "disorder.png")
+    )
     data["chromophore_candidates"] = chromophore_candidates(sequence)
     data["uniprot"] = uniprot
     data["pdbe"] = (
-        fetch_pdbe_structures(data["uniprot"]["accession"])
-        if data["uniprot"]["status"] == "verified"
-        else {
+        {
             "status": "not_requested",
-            "reason": "A verified UniProt accession is required before PDBe lookup.",
+            "reason": "Deferred to extended analysis; lightweight Passenger report requested.",
         }
+        if lightweight
+        else (
+            fetch_pdbe_structures(data["uniprot"]["accession"])
+            if data["uniprot"]["status"] == "verified"
+            else {
+                "status": "not_requested",
+                "reason": "A verified UniProt accession is required before PDBe lookup.",
+            }
+        )
     )
     data["foldseek"] = (
         run_foldseek_search(data["pdbe"], output_dir)
-        if run_foldseek else {"status": "not_requested"}
+        if run_foldseek and not lightweight else {"status": "not_requested"}
     )
     # Motifs and the position map are derived from the analysed sequence, plus the feature
     # list already fetched above; the structure section ranks the PDBe mappings already held.
@@ -957,9 +998,17 @@ def generate_report(
         sequence, uniprot, data["predicted_motifs"], output_dir / "positions.png"
     )
     data["structure_display"] = build_structure_display(data, output_dir)
-    (output_dir / "report.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    # The compute job replaces the preliminary report; readers must never see partial HTML/JSON.
+    report_json = output_dir / "report.json"
+    temporary_json = output_dir / ".report.json.tmp"
+    temporary_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temporary_json.replace(report_json)
     report = output_dir / "report.html"
-    report.write_text(render_html(data, generated_at=data["generated_at_utc"]), encoding="utf-8")
+    temporary_html = output_dir / ".report.html.tmp"
+    temporary_html.write_text(
+        render_html(data, generated_at=data["generated_at_utc"]), encoding="utf-8"
+    )
+    temporary_html.replace(report)
     return report
 
 
@@ -977,12 +1026,21 @@ def main() -> int:
     parser.add_argument(
         "--foldseek",
         action="store_true",
-        help="run the submitted sequence through the public Foldseek search API",
+        help="run the submitted structure through the public Foldseek search API",
+    )
+    parser.add_argument(
+        "--lightweight",
+        action="store_true",
+        help="compute only from the submitted sequence; defer all UniProt and structural retrieval",
     )
     args = parser.parse_args()
     try:
         report = generate_report(
-            args.input, args.output, accession=args.accession, run_foldseek=args.foldseek
+            args.input,
+            args.output,
+            accession=args.accession,
+            run_foldseek=args.foldseek,
+            lightweight=args.lightweight,
         )
     except (SequenceError, OSError, UnicodeError, ValueError) as exc:
         print(f"Report not generated: {exc}", file=sys.stderr)

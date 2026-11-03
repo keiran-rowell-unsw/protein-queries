@@ -74,6 +74,29 @@ def test_report_is_complete_and_escapes_header(tmp_path):
     assert not (path.parent / "disorder.png").exists()
 
 
+def test_lightweight_report_does_not_retrieve_even_with_accession(monkeypatch, tmp_path):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("preliminary report tried to call a remote service")
+
+    for name in ("fetch_annotations", "find_sequence_annotations", "fetch_pdbe_structures",
+                 "run_foldseek_search", "predict_disorder"):
+        monkeypatch.setattr("protein_agent.report." + name, forbidden)
+    source = tmp_path / "sequence.fa"
+    source.write_text(">submitted\nACDEFGHIKLMNPQRSTVWY\n")
+    path = generate_report(
+        source, tmp_path / "preliminary", accession="Q12345",
+        run_foldseek=True, lightweight=True,
+    )
+    data = json.loads((path.parent / "report.json").read_text())
+    assert data["uniprot"]["status"] == "not_requested"
+    assert data["uniprot"]["requested_accession"] == "Q12345"
+    assert data["pdbe"]["status"] == "not_requested"
+    assert data["foldseek"]["status"] == "not_requested"
+    assert data["length_residues"] == 20
+    assert "Preliminary sequence-only report" in path.read_text()
+    assert "No accession was supplied" not in path.read_text()
+
+
 def test_accession_only_uses_canonical_sequence(monkeypatch, tmp_path):
     canonical = "ACDEFGHIKLMNPQRSTVWY"
     monkeypatch.setattr(
@@ -110,10 +133,17 @@ def test_accession_precedes_different_submitted_sequence(monkeypatch, tmp_path):
     assert "accession precedence was applied" in path.read_text()
 
 
-@pytest.mark.parametrize("sequence", [">a\nACD\n>b\nEFG", "ACD-X", "ACD123", "A" * 10001])
+@pytest.mark.parametrize("sequence", [">a\nACD\n>b\nEFG", "ACD-X", "ACD123", "A" * 5001])
 def test_invalid_input_is_rejected_not_modified(sequence):
     with pytest.raises(SequenceError):
         parse_sequence(sequence)
+
+
+def test_sequence_limit_counts_residues_not_fasta_formatting():
+    header, sequence = parse_sequence(">synthetic sequence\n" + "A" * 2500 + "\n" + "A" * 2500)
+    assert header == "synthetic sequence" and len(sequence) == 5000
+    with pytest.raises(SequenceError, match="5,000-residue limit"):
+        parse_sequence(">synthetic sequence\n" + "A" * 5001)
 
 
 def test_local_web_accepts_accession_without_sequence(monkeypatch, tmp_path):
@@ -251,6 +281,8 @@ def test_local_web_serves_the_position_map_when_features_exist(monkeypatch, tmp_
     output_root = tmp_path / "mapped"
     output = output_root / token
     page = generate_report(None, output, accession="Q12345").read_text()
+    assert "<summary>UniProt annotations</summary>" in page
+    assert page.index("<summary>UniProt annotations</summary>") > page.index("Predicted PTM motifs")
     assert 'src="positions.png"' in page
     assert (output / "positions.png").is_file()
 
