@@ -781,7 +781,7 @@ def render_html(data: dict, *, generated_at: str) -> str:
         _row("Net charge at pH 7", data["net_charge_pH_7"]),
         _row("Average hydropathy (GRAVY)", data["gravy_kyte_doolittle"]),
         _row("Aromatic amino-acid fraction", f"{data['aromaticity_iron_dos_santos']:.1%}"),
-        _row("Instability index (sequence estimate)", data["instability_index_guruprasad"]),
+        _row("Instability index (sequence estimate) [> 40 predicted to be stable]", data["instability_index_guruprasad"]),
         _row("A280 extinction coefficient (reduced)", f"{ext['reduced']} M⁻¹ cm⁻¹"),
         _row("A280 extinction coefficient (oxidised)", f"{ext['oxidised']} M⁻¹ cm⁻¹"),
     ]
@@ -855,7 +855,7 @@ def render_html(data: dict, *, generated_at: str) -> str:
 {preliminary}
 <h2>At a glance</h2><table>{''.join(rows)}</table>
 <h2>Hydropathy along the sequence</h2>
-<p>Positive values are more hydrophobic; negative values are more hydrophilic.</p>
+<p>Positive values are more hydrophobic - negative values are more hydrophilic.</p>
 <img src="hydropathy.png" alt="Hydropathy profile across the submitted sequence">
 <p><a href="hydropathy.png" download>Download the hydropathy image</a></p>
 {disorder_section}

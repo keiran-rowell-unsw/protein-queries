@@ -248,7 +248,7 @@ def plot_position_map(
     ax.set_xlim(0, length)
     ax.set_ylim(0.2, len(active) + 0.8)
     ax.set_yticks([])
-    ax.set_xlabel("residue position", fontsize=9)
+    #ax.set_xlabel("residue position", fontsize=9)
     ax.tick_params(labelsize=8)
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
