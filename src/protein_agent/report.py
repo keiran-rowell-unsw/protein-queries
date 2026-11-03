@@ -653,10 +653,9 @@ def _uniprot_section(record: dict) -> str:
             + "</p>"
         )
     return (
-        "<h2>UniProt annotations</h2>"
+        "<details><summary>UniProt annotations</summary>"
         + identity_statement
         + identity_details
-        + "<details><summary>Open detailed UniProt annotations</summary>"
         + annotation_sections
         + "</details>"
     )
