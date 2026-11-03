@@ -1,14 +1,13 @@
 # protein-queries
 
-Retrieval-grounded protein tools for UniProt, PDBe, sequence analysis, and
-structure-neighbour searches. Inference uses the UNSW ResTech Local Inference
-gateway; it does not use a vendor cloud API.
+Protein reports using UniProt, PDBe, local sequence analysis, and optional
+structure-neighbour searches. The Open OnDemand report app is deterministic and
+requires no inference service, model, or API key.
 
 ## Choose a workflow
 
 | Workflow | Use it for | Runs where |
 | --- | --- | --- |
-| Agent CLI | Questions about a named protein | Local client plus UniProt/PDBe services |
 | Local report | Developing or testing a sequence report | The current machine |
 | Open OnDemand report | Full reports without login-node computation | PBS compute node |
 
@@ -20,33 +19,11 @@ Python 3.11 or newer is required. Install the pinned environment with:
 uv sync --extra dev
 ```
 
-The agent CLI requires an invite-only ResTech key:
-
-```bash
-export RESTECH_API_KEY=sk-…       # never commit or print this value
-```
-
-## Agent CLI
-
-Ask a retrieval-grounded question or inspect available models:
-
-```bash
-uv run python -m protein_agent --model qwen3.8-flash-next \
-  "function of human TP53"
-uv run python -m protein_agent --list-models
-uv run python -m protein_agent --dry-run "…"
-```
-
-The first model request must make a retrieval tool call. Later requests may use
-`auto` tool choice so the model can finish after retrieval. The proof layer then
-checks the answer against recorded tool results and blocks unsupported selected
-identifiers and claim patterns. This is a safeguard, not exhaustive semantic
-verification; model output is never evidence by itself.
-
-Protein identity, UniProt annotations, and experimental structures must come from
-retrieved UniProt or PDBe records. Sequence-derived properties are calculated
-locally. Disorder is a prediction, and Foldseek results are structural-neighbour
-candidates, not identity claims.
+No API credentials are required for report generation. Protein identity, UniProt
+annotations, and experimental structures come from retrieved UniProt or PDBe
+records. Sequence-derived properties are calculated locally. Disorder is a
+prediction, and Foldseek results are structural-neighbour candidates rather than
+identity claims.
 
 ## Local sequence report
 
@@ -146,11 +123,6 @@ timed out—not as evidence that no structural neighbours exist.
 
 | Variable | Purpose |
 | --- | --- |
-| `RESTECH_API_KEY` | Required inference-gateway bearer key; never logged |
-| `RESTECH_BASE_URL` | Inference gateway; defaults to the ResTech `/v1` URL |
-| `RESTECH_MODEL` | Default chat model; pin a model for reproducibility |
-| `RESTECH_TIMEOUT` / `RESTECH_TEMPERATURE` | Optional gateway settings |
-| `MAX_TOOL_ROUNDS` | Agent-loop bound; defaults to 6 |
 | `UNIPROT_BASE_URL` | UniProt API base; defaults to `https://rest.uniprot.org` |
 | `PROTEIN_REPORT_EXTENDED_PYTHON` | Compute-node Python for queued reports |
 | `PROTEIN_REPORT_EMAIL` | Optional default report recipient |
@@ -172,7 +144,6 @@ is not required for the test suite.
 
 ## Repository guide
 
-- `src/protein_agent/agent.py` — bounded model/tool loop
 - `src/protein_agent/retrieval.py` — UniProt REST retrieval and provenance
 - `src/protein_agent/pdbe_mcp.py` — PDBe MCP discovery and calls
 - `src/protein_agent/report.py` — sequence report generation
