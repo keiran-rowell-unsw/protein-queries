@@ -7,7 +7,6 @@ calculation and retrieval runs on an allocated compute node.
 # HTML template and WSGI responses are kept readable as continuous lines.
 # ruff: noqa: E501, UP031
 import contextlib
-import fcntl
 import hmac
 import html
 import json
@@ -38,11 +37,7 @@ REPORT_EMAIL = os.environ.get("PROTEIN_REPORT_EMAIL", "").strip()
 EMAIL_RE = re.compile(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+\Z")
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
-MAX_CHAT_BODY = 20_000
-MAX_CHAT_MESSAGES = 12
 MAX_SEQUENCE_RESIDUES = 5_000
-# Temporarily disabled while the retrieval interface is being expanded.
-REPORT_ASSISTANT_ENABLED = False
 TOKEN = re.compile(r"[a-f0-9]{32}\Z")
 FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/json",
          "hydropathy.png": "image/png", "disorder.png": "image/png",
@@ -78,81 +73,6 @@ def page(prefix, csrf, message=""):
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="submit">Queue report</button>
 </form></main></div></body></html>""" % (message, prefix, html.escape(csrf, quote=True))
-
-
-def chat_page(prefix, token, csrf, history=(), message=""):
-    action = "%s/results/%s/chat" % (html.escape(prefix, quote=True), token)
-    turns = "".join(
-        "<section class=\"turn %s\"><h2>%s</h2><p>%s</p></section>" % (
-            "user" if item.get("role") == "user" else "assistant",
-            "You" if item.get("role") == "user" else "Report assistant",
-            html.escape(str(item.get("content") or "")),
-        )
-        for item in history
-        if item.get("role") in {"user", "assistant"}
-    )
-    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Ask about this report</title>
-<style>:root{--ink:#172033;--muted:#64748b;--line:#dbe4ee;--brand:#0e7490}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:2.5rem 1rem;font:1rem/1.55 system-ui;color:var(--ink);background:#f1f6f8}.shell{max-width:820px;margin:auto}a{color:var(--brand)}header{margin-bottom:1.5rem}h1{margin:.4rem 0;font-size:clamp(2rem,6vw,3rem);letter-spacing:-.035em}header p{color:var(--muted)}.turn{margin:1rem 0;padding:1rem 1.2rem;border:1px solid var(--line);border-radius:16px;background:white;box-shadow:0 8px 25px rgba(15,23,42,.05)}.turn.user{margin-left:12%%;background:#e6f5f7}.turn h2{margin:0 0 .35rem;font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;color:var(--brand)}.turn p{margin:0;white-space:pre-wrap}.composer{margin-top:1.5rem;padding:1.2rem;border-radius:18px;background:white;box-shadow:0 12px 35px rgba(15,23,42,.08)}label{display:block;margin-bottom:.4rem;font-weight:700}textarea{width:100%%;box-sizing:border-box;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:.8rem;font:inherit}textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 4px rgba(14,116,144,.12)}button{margin-top:.75rem;border:0;border-radius:999px;padding:.7rem 1.1rem;background:var(--brand);color:white;font:inherit;font-weight:700;cursor:pointer}</style></head><body><div class="shell">
-<header><a href="%s/results/%s/report.html">← Back to report</a><h1>Ask about this report</h1><p>Answers are restricted to facts recorded in this report.</p></header>%s%s
-<form class="composer" method="post" action="%s"><input type="hidden" name="csrf" value="%s">
-<label for="question">Your question</label><textarea id="question" name="question" rows="4"
-maxlength="4000" required placeholder="What are the main findings?"></textarea><button type="submit">Ask report assistant</button>
-</form></div></body></html>""" % (
-        html.escape(prefix, quote=True), token, message, turns, action,
-        html.escape(csrf, quote=True),
-    )
-
-
-def _load_chat(folder):
-    path = folder / "chat.json"
-    if not path.is_file():
-        return []
-    try:
-        items = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return []
-    return items[-MAX_CHAT_MESSAGES:] if isinstance(items, list) else []
-
-
-def _save_chat(folder, history):
-    target = folder / "chat.json"
-    temporary = folder / (".chat.%s.tmp" % secrets.token_hex(8))
-    try:
-        temporary.write_text(
-            json.dumps(history[-MAX_CHAT_MESSAGES:], ensure_ascii=False), encoding="utf-8"
-        )
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def run_report_chat(folder, question, history):
-    """Run report-only inference remotely; user text travels on stdin, never in the shell."""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", HOST) or not PROJECT.startswith("/"):
-        raise RuntimeError("invalid report-chat host configuration")
-    args = [
-        PROJECT + "/.venv/bin/python", "-m", "protein_agent.report_chat",
-        "--report", str(folder / "report.json"),
-    ]
-    remote = "cd " + shlex.quote(PROJECT) + " && " + shlex.join(args)
-    payload = json.dumps({"question": question, "history": history}, ensure_ascii=False)
-    result = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-         "-o", "ConnectTimeout=8", HOST, remote],
-        input=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True, timeout=150, check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("report assistant unavailable")
-    try:
-        response = json.loads(result.stdout)
-    except (ValueError, TypeError) as exc:
-        raise RuntimeError("report assistant returned an invalid response") from exc
-    answer = response.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        raise RuntimeError("report assistant could not produce a grounded answer")
-    return answer.strip()
 
 
 def validate_sequence(text):
@@ -412,80 +332,6 @@ def application(environ, start_response):
             ("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; SameSite=Strict" %
              (csrf, cookie_path)),
         ])
-    chat_parts = path.split("/")
-    is_chat = (
-        len(chat_parts) == 4
-        and chat_parts[1] == "results"
-        and TOKEN.fullmatch(chat_parts[2])
-        and chat_parts[3] == "chat"
-        and REPORT_ASSISTANT_ENABLED
-    )
-    if method == "GET" and is_chat:
-        folder = ROOT / chat_parts[2]
-        if not (folder / "report.json").is_file():
-            return respond(start_response, "404 Not Found", "Not found")
-        csrf = secrets.token_hex(16)
-        cookie_path = prefix + "/"
-        return respond(
-            start_response,
-            "200 OK",
-            chat_page(prefix, chat_parts[2], csrf, _load_chat(folder)),
-            headers=[
-                ("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; "
-                 "SameSite=Strict" % (csrf, cookie_path)),
-            ],
-        )
-    if method == "POST" and is_chat:
-        folder = ROOT / chat_parts[2]
-        if not (folder / "report.json").is_file():
-            return respond(start_response, "404 Not Found", "Not found")
-        try:
-            size = int(environ.get("CONTENT_LENGTH") or 0)
-            if size < 1 or size > MAX_CHAT_BODY:
-                raise ValueError("invalid chat submission size")
-            fields = parse_qs(
-                environ["wsgi.input"].read(size).decode("utf-8"), keep_blank_values=True
-            )
-            cookies = dict(
-                part.strip().split("=", 1)
-                for part in environ.get("HTTP_COOKIE", "").split(";")
-                if "=" in part
-            )
-            stored = cookies.get("protein_report_csrf", "")
-            submitted = fields.get("csrf", [])
-            if (
-                not TOKEN.fullmatch(stored)
-                or len(submitted) != 1
-                or not hmac.compare_digest(stored, submitted[0])
-            ):
-                return respond(start_response, "403 Forbidden", "Invalid form token. Reload chat.")
-            if set(fields) - {"csrf", "question"} or len(fields.get("question", [])) != 1:
-                raise ValueError("submit exactly one question")
-            question = fields["question"][0].strip()
-            if not 1 <= len(question) <= 4000:
-                raise ValueError("question must contain 1-4,000 characters")
-            with (folder / ".chat.lock").open("a", encoding="utf-8") as lock:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                history = _load_chat(folder)
-                answer = run_report_chat(folder, question, history)
-                history.extend([
-                    {"role": "user", "content": question},
-                    {"role": "assistant", "content": answer},
-                ])
-                _save_chat(folder, history)
-            return respond(
-                start_response,
-                "200 OK",
-                chat_page(prefix, chat_parts[2], stored, history),
-            )
-        except (ValueError, UnicodeError):
-            return respond(start_response, "400 Bad Request", "Invalid chat submission.")
-        except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            return respond(
-                start_response,
-                "503 Service Unavailable",
-                "<p>The report assistant is unavailable. The report itself remains valid.</p>",
-            )
     if method == "POST" and path == "/run":
         stored = ""
         try:
@@ -559,13 +405,6 @@ def application(environ, start_response):
             if result.is_file():
                 body = result.read_bytes()
                 csrf = secrets.token_hex(16)
-                if parts[3] == "report.html" and REPORT_ASSISTANT_ENABLED:
-                    link = (
-                        b'<div class="report-shell"><div class="note"><h2>Ask about this report</h2>'
-                        b'<p><a href="chat">Open the report-only assistant</a>. It can explain '
-                        b'this report but cannot perform fresh database retrieval.</p></div></div>'
-                    )
-                    body = body.replace(b"</body>", link + b"</body>")
                 headers = []
                 if parts[3] == "report.html":
                     headers.append(("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; SameSite=Strict" % (csrf, prefix + "/")))

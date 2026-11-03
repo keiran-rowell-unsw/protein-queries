@@ -284,31 +284,6 @@ def test_health_is_read_only_and_reports_pbs_only(monkeypatch):
     assert payload["uniprot"] == "deferred_to_compute_job"
 
 
-def test_report_chat_is_temporarily_disabled(tmp_path):
-    token = "a" * 32
-    folder = tmp_path / token
-    folder.mkdir()
-    (folder / "report.json").write_text("{}")
-    assert request("GET", f"/results/{token}/chat")["status"] == "404 Not Found"
-
-
-def test_remote_report_chat_uses_stdin_not_shell_arguments(monkeypatch, tmp_path):
-    folder = tmp_path / "report"
-    folder.mkdir()
-    (folder / "report.json").write_text("{}")
-    seen = {}
-
-    def fake_run(args, **kwargs):
-        seen.update(args=args, kwargs=kwargs)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"answer": "Grounded."}))
-
-    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
-    answer = ood_app.run_report_chat(folder, "question; rm -rf /", [])
-    assert answer == "Grounded."
-    assert "question; rm -rf /" not in seen["args"][-1]
-    assert json.loads(seen["kwargs"]["input"])["question"] == "question; rm -rf /"
-
-
 def test_every_report_figure_is_allowed_and_path_traversal_is_blocked():
     report_source = Path("src/protein_agent/report.py").read_text()
     sections_source = Path("src/protein_agent/report_sections.py").read_text()
