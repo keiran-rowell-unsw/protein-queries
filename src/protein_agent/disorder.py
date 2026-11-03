@@ -68,7 +68,7 @@ def predict_disorder(sequence: str, out_path: Path) -> dict[str, Any]:
             ax.axvspan(region["start"], region["end"], color="#4c1688", alpha=0.12)
         ax.axhline(0.5, color="#555", lw=0.9, ls="--", label="V3 threshold (0.5)")
         ax.set(xlim=(1, max(2, len(values))), ylim=(0, 1),
-               xlabel="residue position (1-based)", ylabel="predicted disorder score")
+               xlabel="residue position", ylabel="predicted disorder score")
         ax.legend(loc="upper right", fontsize=8)
         fig.tight_layout()
         fig.savefig(out_path, dpi=150, bbox_inches="tight")

@@ -69,7 +69,7 @@ def plot_hydropathy(
         color="#0F0F0F",
     )
 
-    ax.set_xlabel("residue position (1-based)", fontsize=9)
+    ax.set_xlabel("residue position", fontsize=9)
     ax.set_ylabel("hydropathy index", fontsize=9)
     ax.set_title(
         f"{label} — Kyte-Doolittle, {window}-residue centred window",
