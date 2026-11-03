@@ -222,6 +222,7 @@ def submit_report_job(folder):
         "#PBS -l walltime=00:20:00\n"
         "#PBS -l ncpus=2\n"
         "#PBS -l mem=4gb\n"
+        "#PBS -m abe\n"
         "set -u\n"
         f"printf '%s\\n' '{{\"status\":\"running\"}}' > {shlex.quote(job_json)}\n"
         f"if {shlex.join(command)}; then\n"
@@ -280,28 +281,36 @@ def pending_page(prefix, token, folder):
     if not job_id:
         with contextlib.suppress(OSError, UnicodeError):
             job_id = (folder / "job-id.txt").read_text(encoding="utf-8").strip()
+    active_jobs = html.escape(OOD_ACTIVE_JOBS_URL, quote=True)
+    report_url = html.escape(f"{prefix}/results/{token}/report.html", quote=True)
     if status in {"failed", "unavailable"}:
         reason = html.escape(str(job.get("reason") or "The compute job did not complete."))
         return (
             "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            "<title>Report unavailable</title></head><body><main>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Report unavailable</title><style>"
+            "body{margin:0;background:#f4f7f9;color:#172033;font:16px system-ui}"
+            ".card{max-width:34rem;margin:12vh auto;padding:2rem;background:white;"
+            "border:1px solid #dbe4ee;border-radius:16px;box-shadow:0 8px 30px #0f172a12}"
+            "a{color:#0369a1}</style></head><body><main class='card'>"
             f"<h1>Report unavailable</h1><p>{reason}</p>"
-            f"<p><a href='{html.escape(prefix, quote=True)}/'>Submit a new report</a></p>"
+            f"<a href='{html.escape(prefix, quote=True)}/'>Submit a new report</a>"
             "</main></body></html>"
         )
-    job_detail = (
-        f"<p>PBS job: <code>{html.escape(job_id)}</code>.</p>" if job_id else ""
-    )
-    active_jobs = html.escape(OOD_ACTIVE_JOBS_URL, quote=True)
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Report queued</title>"
-        "<meta http-equiv='refresh' content='10'></head><body><main>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv='refresh' content='10'><title>Report queued</title><style>"
+        "body{margin:0;background:#f4f7f9;color:#172033;font:16px system-ui}"
+        ".card{max-width:34rem;margin:12vh auto;padding:2rem;background:white;"
+        "border:1px solid #dbe4ee;border-radius:16px;box-shadow:0 8px 30px #0f172a12}"
+        "h1{margin-top:0;font-size:1.5rem}code{padding:.15rem .35rem;background:#eef2f7;"
+        "border-radius:5px;font-size:.9em}a{color:#0369a1}.muted{color:#64748b}"
+        "</style></head><body><main class='card'>"
         f"<h1>Report queued</h1><p>Status: <strong>{html.escape(status)}</strong>.</p>"
-        f"{job_detail}<p><a href='{active_jobs}' target='_blank' rel='noopener'>"
-        "Open this job in OOD Active Jobs</a>.</p>"
-        "<p>You may leave this page. It refreshes every 10 seconds and the full report "
-        "will appear here when PBS finishes.</p>"
-        f"<p><a href='{html.escape(prefix, quote=True)}/results/{token}/report.html'>Refresh now</a></p>"
+        f"<p class='muted'>{('PBS job: <code>' + html.escape(job_id) + '</code>.' if job_id else 'PBS job submitted.')}</p>"
+        f"<p><a href='{active_jobs}' target='_blank' rel='noopener'>Open in OOD Active Jobs</a></p>"
+        f"<p><a href='{report_url}'>Open report when ready</a></p>"
         "</main></body></html>"
     )
 

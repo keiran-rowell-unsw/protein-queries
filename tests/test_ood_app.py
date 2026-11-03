@@ -93,7 +93,8 @@ def test_every_submission_queues_without_local_report(
     assert b"123.server" in pending["body"]
     assert b"OOD Active Jobs" in pending["body"]
     assert b"/pun/sys/dashboard/activejobs" in pending["body"]
-    assert b"refresh" in pending["body"]
+    assert b"OOD Active Jobs" in pending["body"]
+    assert b"<style>" in pending["body"]
 
 
 def test_submission_failure_removes_partial_request(monkeypatch, tmp_path):
@@ -162,6 +163,7 @@ def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     assert "--foldseek" in script and "--accession Q12345" in script
     assert "--lightweight" not in script and "ssh" not in script
     assert "#PBS -l ncpus=2" in script and "#PBS -l mem=4gb" in script
+    assert "#PBS -m abe" in script
 
 
 def test_default_compute_environment_and_missing_environment(monkeypatch, tmp_path):
