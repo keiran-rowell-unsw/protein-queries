@@ -31,6 +31,7 @@ DEFAULT_COMPUTE_PYTHON = str(Path(PROJECT) / ".compute-venv" / "bin" / "python")
 OOD_ACTIVE_JOBS_URL = os.environ.get(
     "OOD_ACTIVE_JOBS_URL", "/pun/sys/dashboard/activejobs"
 )
+REPORT_EMAIL = os.environ.get("PROTEIN_REPORT_EMAIL", "").strip()
 ROOT = Path.home() / "ondemand" / "data" / "protein-queries" / "reports"
 MAX_BODY = 300_000
 MAX_CHAT_BODY = 20_000
@@ -200,6 +201,8 @@ def submit_report_job(folder):
     with contextlib.suppress(OSError, ValueError, TypeError):
         request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
     python = EXTENDED_PYTHON or DEFAULT_COMPUTE_PYTHON
+    if REPORT_EMAIL and not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", REPORT_EMAIL):
+        raise RuntimeError("PROTEIN_REPORT_EMAIL is not a valid address")
     if not python.startswith("/"):
         raise RuntimeError("extended Python path must be absolute")
     if not EXTENDED_PYTHON and not Path(python).is_file():
@@ -226,7 +229,14 @@ def submit_report_job(folder):
         "set -u\n"
         f"printf '%s\\n' '{{\"status\":\"running\"}}' > {shlex.quote(job_json)}\n"
         f"if {shlex.join(command)}; then\n"
-        f"  printf '%s\\n' '{{\"status\":\"complete\"}}' > {shlex.quote(job_json)}\n"
+        + (
+            "  " + shlex.join([
+                python, "-m", "protein_agent.mail_report", "--report-dir", str(folder),
+                "--recipient", REPORT_EMAIL,
+            ]) + " || true\n"
+            if REPORT_EMAIL else ""
+        )
+        + f"  printf '%s\\n' '{{\"status\":\"complete\"}}' > {shlex.quote(job_json)}\n"
         f"  rm -f -- {shlex.quote(str(reservation))}\n"
         "else\n"
         f"  printf '%s\\n' '{{\"status\":\"failed\"}}' > {shlex.quote(job_json)}\n"
@@ -245,6 +255,7 @@ def submit_report_job(folder):
         result = subprocess.run(
             [
                 PBS_SUBMIT_COMMAND,
+                *(('-M', REPORT_EMAIL) if REPORT_EMAIL else ()),
                 "-o", str(folder / "job.log"),
                 "-j", "oe",
                 str(script),

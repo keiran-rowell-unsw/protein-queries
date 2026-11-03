@@ -90,8 +90,12 @@ git clone --branch passenger-fully-queued \
 - Set `PBS_SUBMIT_COMMAND` only if `qsub` is not available under that name.
 - Establish a report-retention policy; results are not automatically deleted.
 
-No dependency installation occurs during a web request or report job. Restart the PUN
-after changing branches or environment configuration. The separate
+No dependency installation occurs during a web request or report job. PBS sends the
+requestor a normal start/end/abort notification (`#PBS -m abe`). To attach the completed
+`report.html` and `report.json`, set `PROTEIN_REPORT_EMAIL` explicitly in the Passenger
+environment; the compute node must provide `/usr/sbin/sendmail` (or `sendmail` on PATH)
+and an approved relay. Attachment delivery is best-effort and never changes a successful
+report into a failed one. Restart the PUN after changing branches or environment configuration. The separate
 `protein_agent.web` prototype has no authentication and is not the OOD deployment.
 
 ## Hard rule: no memory-only answers

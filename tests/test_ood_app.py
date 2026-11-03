@@ -135,6 +135,22 @@ def test_csrf_invalid_fasta_and_residue_limit_are_rejected(monkeypatch, tmp_path
     ood_app.validate_sequence(">synthetic\n" + "A" * 2500 + "\n" + "A" * 2500)
 
 
+def test_report_email_is_optional_and_added_to_pbs_job(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
+    monkeypatch.setattr(ood_app, "REPORT_EMAIL", "requestor@example.edu")
+    monkeypatch.setattr(
+        ood_app.subprocess, "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout="123.server\n"),
+    )
+    ood_app.submit_report_job(folder)
+    script = (folder / ".report.pbs").read_text()
+    assert "--recipient requestor@example.edu" in script
+    assert "-m abe" in script
+
+
 def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     folder = tmp_path / "report"
     folder.mkdir()
