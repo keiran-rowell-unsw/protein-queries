@@ -57,8 +57,10 @@ Input and identity rules:
 ## Open OnDemand / PBS report app
 
 The Passenger front end validates input, stores it in the user’s private report
-directory, submits one PBS job, and serves the status and completed report. It does
-not perform scientific calculations, retrieval, inference, or structure processing.
+directory, submits one PBS job, and serves the status and completed report. Apart
+from the bounded, offline `/protein-prop-summary` calculations described below, it
+does not perform scientific calculations, retrieval, inference, or structure
+processing.
 The compute job runs UniProt verification, metapredict, PDBe retrieval, and the
 optional structure-backed Foldseek path.
 
@@ -86,17 +88,29 @@ Deployment prerequisites:
 - Configure a 90-day retention cleanup for report directories; automatic deletion is
   an administrator deployment task and is not performed during web requests.
 
-### Immediate browser identity lookup
+### Immediate preliminary summary (browser retrieval + bounded PUN calculations)
 
-The submission page performs a preliminary lookup in the user’s browser: it fetches
-the public UniProt record for a typed accession directly from
-`rest.uniprot.org` (cross-origin requests are permitted) and shows the resolved
-protein name, organism, length, and review status before the job is queued. The
-app’s Content Security Policy permits this one endpoint only (`connect-src
-https://rest.uniprot.org`), the fetched record is rendered with text-safe DOM
-APIs, and no retrieval runs on the OOD host. The lookup is a convenience: it may
-be blocked by browser or network policy, and the queued PBS job remains the
-authoritative, sequence-verified report.
+The submission page offers two paths:
+
+- **Immediate preliminary summary.** The user’s browser makes one request to the
+  public UniProt API for a typed accession (cross-origin requests are permitted;
+  the JSON already contains the canonical sequence, so retrieval is a single
+  fetch). The sequence is then posted to the app’s stateless
+  `/protein-prop-summary` endpoint, which runs bounded, offline, deterministic
+  library calculations (Biopython ProtParam plus the pepstats-equivalent metrics;
+  no retrieval, no network, no writes, sub-second for the 5,000-residue limit)
+  and returns composition-derived properties. The result is labelled
+  preliminary.
+- **Queue full report.** Unchanged: one PBS job performs UniProt verification,
+  metapredict, PDBe retrieval, and the optional Foldseek path, and its report is
+  authoritative.
+
+The Content Security Policy permits exactly two remote destinations for scripts
+and connections: the app itself and `https://rest.uniprot.org`. Fetched records
+are rendered with text-safe DOM APIs only. The immediate summary requires the
+Passenger interpreter to provide Biopython; if it is unavailable the endpoint
+reports that the summary is unavailable and queueing still works. The PUN
+endpoint never contacts UniProt or any other external service.
 
 ### Email delivery
 

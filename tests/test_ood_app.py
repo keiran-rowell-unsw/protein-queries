@@ -50,10 +50,13 @@ def test_manifest_wsgi_and_form_describe_queued_reports():
     assert b"Queues a job to fetch results" in form["body"]
     assert b"Queues a full report job" in form["body"]
     assert b"maximum 5,000 residues" in form["body"]
-    assert b"Queue report" in form["body"]
+    assert b"Queue full report" in form["body"]
+    assert b"Immediate preliminary summary" in form["body"]
+    assert b"protein-prop-summary" not in form["body"]  # endpoint is fetched, not linked
     assert b"lookup.js" in form["body"]
-    assert "connect-src https://rest.uniprot.org" in form["headers"]["Content-Security-Policy"]
-    assert "script-src 'self'" in form["headers"]["Content-Security-Policy"]
+    policy = form["headers"]["Content-Security-Policy"]
+    assert "connect-src 'self' https://rest.uniprot.org" in policy
+    assert "script-src 'self'" in policy
 
 
 def test_browser_lookup_asset_is_served_and_traversal_blocked():
@@ -303,6 +306,34 @@ def test_every_report_figure_is_allowed_and_path_traversal_is_blocked():
     assert served and served <= set(ood_app.FILES)
     traversal = request("GET", "/results/" + "a" * 32 + "/../../input.fasta")
     assert traversal["status"] == "404 Not Found"
+
+
+def test_protein_prop_summary_is_stateless_and_bounded():
+    _form, cookie, csrf = form_cookie()
+    unauthorised = request(
+        "POST", "/protein-prop-summary",
+        body=urlencode({"sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode(),
+    )
+    assert unauthorised["status"] == "403 Forbidden"
+    response = request(
+        "POST", "/protein-prop-summary",
+        body=urlencode({"csrf": csrf, "sequence": ">sum\nACDEFGHIKLMNPQRSTVWY"}).encode(),
+        cookie=cookie,
+    )
+    assert response["status"] == "200 OK"
+    payload = json.loads(response["body"])
+    assert payload["preliminary"] is True
+    props = payload["properties"]
+    assert props["length_residues"] == 20
+    assert props["molecular_weight_da"] > 0
+    assert "inclusion_body_propensity" in props
+    invalid = request(
+        "POST", "/protein-prop-summary",
+        body=urlencode({"csrf": csrf, "sequence": ">a\nACD\n>b\nEFG"}).encode(),
+        cookie=cookie,
+    )
+    assert invalid["status"] == "400 Bad Request"
+    assert json.loads(invalid["body"])["error"]
 
 
 def test_local_prototype_serves_every_report_figure(tmp_path):

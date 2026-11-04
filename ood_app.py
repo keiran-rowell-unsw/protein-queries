@@ -46,7 +46,7 @@ FILES = {"report.html": "text/html; charset=utf-8", "report.json": "application/
 ASSETS = {"lookup.js": "application/javascript; charset=utf-8"}
 UNIPROT_ORIGIN = "https://rest.uniprot.org"
 CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
-       "script-src 'self'; connect-src " + UNIPROT_ORIGIN + "; form-action 'self'")
+       "script-src 'self'; connect-src 'self' " + UNIPROT_ORIGIN + "; form-action 'self'")
 
 
 def respond(start_response, code, body, content_type="text/html; charset=utf-8", headers=()):
@@ -69,13 +69,14 @@ def page(prefix, csrf, message=""):
 *{box-sizing:border-box}body{margin:0;min-height:100vh;padding:3rem 1rem;font:1rem/1.55 system-ui,-apple-system,sans-serif;color:var(--ink);background:linear-gradient(145deg,#eef7f8,#f8fafc 48%%,#eef2ff)}
 .shell{width:min(760px,100%%);margin:auto}.hero{margin:0 0 1.5rem}.eyebrow{margin:0 0 .4rem;color:var(--brand2);font-size:.78rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:clamp(2rem,7vw,3.4rem);line-height:1.05;letter-spacing:-.04em}.subtitle{margin:.8rem 0 0;color:var(--muted);font-size:1.1rem}
 .panel{padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.9);box-shadow:0 24px 70px rgba(30,64,175,.12);backdrop-filter:blur(12px)}form{display:grid;gap:1.25rem}.field{display:grid;gap:.45rem}label{font-weight:700}.hint{color:var(--muted);font-size:.88rem}input,textarea{width:100%%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit;padding:.8rem .9rem;transition:border-color .15s,box-shadow .15s}textarea{min-height:13rem;resize:vertical;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9rem}input:focus,textarea:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 4px rgba(8,145,178,.13)}button{justify-self:start;border:0;border-radius:999px;padding:.78rem 1.25rem;background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(14,116,144,.22)}button:hover{filter:brightness(1.06)}[role=alert]{padding:.8rem 1rem;border-radius:10px;background:#fff1f2;color:#9f1239}
-</style></head><body><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
-%s<form method="post" action="%s/run"><input type="hidden" name="csrf" value="%s">
+</style></head><body data-prefix="%s"><div class="shell"><header class="hero"><p class="eyebrow">Sequence · annotation · structure</p><h1>Protein report</h1><p class="subtitle">Turn a protein identifier or sequence into a clear, downloadable report.</p></header><main class="panel">
+%s<form method="post" action="%s/run"><input type="hidden" name="csrf" id="csrf" value="%s">
 <div class="field"><label for="accession">UniProt accession</label><span class="hint">Queues a job to fetch results. The browser shows a preliminary identity below while the full report is queued.</span><input id="accession" name="accession" maxlength="13" autocomplete="off" placeholder="e.g. P05067" pattern="([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?"><div id="lookup" aria-live="polite"></div></div>
 <div class="field"><label for="email">Email report (optional)</label><span class="hint">We will send the completed HTML and JSON report as attachments.</span><input id="email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@unsw.edu.au"></div>
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
-<button type="submit">Queue report</button>
-</form></main></div><script src="%s/lookup.js" defer></script></body></html>""" % (message, prefix, html.escape(csrf, quote=True), prefix)
+<button type="button" id="summarize">Immediate preliminary summary</button>
+<button type="submit">Queue full report</button>
+</form><section id="summary" hidden aria-live="polite"></section></main></div><script src="%s/lookup.js" defer></script></body></html>""" % (message, prefix, html.escape(csrf, quote=True), prefix, prefix)
 
 
 def validate_sequence(text):
@@ -255,6 +256,33 @@ def reconcile_pbs_status(folder, job):
     return job
 
 
+def summary_payload(text):
+    """Bounded, offline, deterministic sequence calculations for the immediate view.
+
+    No retrieval and no network access happen here; the browser supplies the sequence.
+    """
+    project_src = str(Path(PROJECT) / "src")
+    if project_src not in sys.path:
+        sys.path.insert(0, project_src)
+    from protein_agent.properties import SequenceError, compute_properties
+
+    try:
+        sequence, warnings = validate_and_clean(text)
+        properties = compute_properties(sequence, header="preliminary").as_dict()
+    except SequenceError as exc:
+        raise ValueError(str(exc)) from exc
+    properties["warnings"] = warnings
+    return {"preliminary": True, "properties": properties}
+
+
+def validate_and_clean(text):
+    """Shared validation, then FASTA cleaning from the calculation module."""
+    validate_sequence(text)
+    from protein_agent.properties import clean_fasta_sequence
+
+    return clean_fasta_sequence(text)
+
+
 def pending_page(prefix, token, folder):
     job = {}
     with contextlib.suppress(OSError, ValueError, TypeError):
@@ -340,6 +368,32 @@ def application(environ, start_response):
             ("Set-Cookie", "protein_report_csrf=%s; Path=%s; Secure; HttpOnly; SameSite=Strict" %
              (csrf, cookie_path)),
         ])
+    if method == "POST" and path == "/protein-prop-summary":
+        try:
+            size = int(environ.get("CONTENT_LENGTH") or 0)
+            if size < 1 or size > MAX_BODY:
+                raise ValueError("submission is empty or too large")
+            fields = parse_qs(environ["wsgi.input"].read(size).decode("utf-8"), keep_blank_values=True)
+            cookies = dict(part.strip().split("=", 1) for part in
+                           environ.get("HTTP_COOKIE", "").split(";") if "=" in part)
+            submitted = fields.get("csrf", [])
+            stored = cookies.get("protein_report_csrf", "")
+            if (not TOKEN.fullmatch(stored) or len(submitted) != 1 or
+                    not hmac.compare_digest(stored, submitted[0])):
+                return respond(start_response, "403 Forbidden", "Invalid form token. Reload the app.")
+            if set(fields) - {"csrf", "sequence"} or len(fields.get("sequence", [])) != 1:
+                raise ValueError("submit exactly one sequence")
+            payload = summary_payload(fields["sequence"][0])
+            return respond(start_response, "200 OK", json.dumps(payload),
+                           "application/json; charset=utf-8")
+        except (ValueError, UnicodeError) as exc:
+            return respond(start_response, "400 Bad Request", json.dumps({
+                "error": str(exc) or "invalid sequence",
+            }), "application/json; charset=utf-8")
+        except (OSError, ImportError):
+            return respond(start_response, "503 Service Unavailable", json.dumps({
+                "error": "the immediate summary is unavailable; queue the full report",
+            }), "application/json; charset=utf-8")
     if method == "POST" and path == "/run":
         stored = ""
         try:
