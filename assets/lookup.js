@@ -13,6 +13,7 @@
 
   var UNIPROT = "https://rest.uniprot.org/uniprotkb/";
   var ACCESSION = /^([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?$/;
+  var UNIPARC = "https://rest.uniprot.org/uniparc/search";
   var input = document.getElementById("accession");
   var output = document.getElementById("lookup");
   var sequence = document.getElementById("sequence");
@@ -24,7 +25,10 @@
 
   var timer = null;
   var request = 0;
+  var matchRequest = 0;
   var canonical = ""; // canonical sequence from the once-off UniProt fetch
+  var matchSection = summarySection; // match result renders inside the summary card
+  var matchStatus = document.createElement("div");
 
   function clear(node) {
     while (node.firstChild) node.removeChild(node.firstChild);
@@ -105,9 +109,121 @@
     paragraph(summarySection,
       "The queued full report adds verified UniProt annotations, PDBe structures, "
       + "disorder prediction, and structural-neighbour search.");
+    clear(matchStatus);
+    matchSection.appendChild(matchStatus);
   }
 
   var identity = {};
+
+  function showMatch(match) {
+    clear(match.output);
+    match.section.hidden = false;
+    if (match.status === "verified") {
+      var link = document.createElement("a");
+      link.href = match.uniprot_url;
+      link.rel = "noopener";
+      link.textContent = match.accession;
+      var heading = document.createElement("strong");
+      heading.appendChild(document.createTextNode("Exact UniParc match: "));
+      heading.appendChild(link);
+      match.output.appendChild(heading);
+      if (match.name) line(match.output, "Protein", match.name);
+      if (match.organism) line(match.output, "Organism", match.organism);
+      if (match.reviewed) line(match.output, "Reviewed", match.reviewed);
+      paragraph(match.output,
+        "The pasted sequence is identical to this UniProtKB entry (CRC64 "
+        + match.checksum + ", verified residue by residue).", "hint");
+    } else if (match.status === "ambiguous") {
+      paragraph(match.output,
+        "Several UniProtKB entries share this exact sequence. Enter the accession "
+        + "you want to annotate. Candidates: " + match.candidates.join(", "), "hint");
+    } else {
+      paragraph(match.output, match.reason, "hint");
+    }
+  }
+
+  function fetchEntry(accession, checksum, match) {
+    return fetch(UNIPROT + encodeURIComponent(accession) + ".json")
+      .then(function (response) {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then(function (entry) {
+        var description = (entry && entry.proteinDescription) || {};
+        var recommended = description.recommendedName || {};
+        match.accession = accession;
+        match.checksum = checksum;
+        match.uniprot_url = "https://www.uniprot.org/uniprotkb/" + accession + "/entry";
+        match.name = (recommended.fullName || {}).value || "";
+        match.organism = (((entry || {}).organism || {}).scientificName) || "";
+        match.reviewed = entry && entry.entryType ? String(entry.entryType) : "";
+        showMatch(match);
+      });
+  }
+
+  function sequenceMatch(sequence, crc) {
+    matchStatus.textContent = "Searching UniParc for an exact sequence match…";
+    var current = ++matchRequest;
+    fetch(
+      UNIPARC + "?query=checksum%3A" + encodeURIComponent(crc)
+      + "&format=json&size=5"
+    )
+      .then(function (response) {
+        if (current !== matchRequest) return;
+        if (!response.ok) {
+          showMatch({ output: matchStatus, section: matchSection, status: "unavailable",
+            reason: "The exact-sequence search is unavailable right now." });
+          return;
+        }
+        var total = parseInt(response.headers.get("X-Total-Results") || "0", 10);
+        return response.json().then(function (payload) {
+          if (current !== matchRequest) return;
+          if (total > 5) {
+            showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
+              candidates: ["too many to list"],
+              reason: "Too many checksum hits to verify safely." });
+            return;
+          }
+          var candidates = [];
+          var results = (payload && payload.results) || [];
+          for (var i = 0; i < results.length; i++) {
+            var seq = results[i].sequence || {};
+            if (seq.value !== sequence || seq.length !== sequence.length) continue;
+            var accessions = results[i].uniProtKBAccessions || [];
+            for (var j = 0; j < accessions.length; j++) {
+              var acc = String(accessions[j]).split(".", 1)[0];
+              if (/^[A-Z0-9]{6,10}$/.test(acc) && candidates.indexOf(acc) < 0) {
+                candidates.push(acc);
+              }
+            }
+          }
+          if (!candidates.length) {
+            showMatch({ output: matchStatus, section: matchSection, status: "not_found",
+              reason: "No exact UniProt sequence match was found; identity is unresolved. "
+                + "This search is exact, not a similarity search." });
+            return;
+          }
+          if (candidates.length > 4) {
+            showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
+              candidates: candidates.slice(0, 8),
+              reason: "Several UniProtKB accessions share this exact sequence." });
+            return;
+          }
+          if (candidates.length === 1) {
+            fetchEntry(candidates[0], crc,
+              { output: matchStatus, section: matchSection, status: "verified" });
+            return;
+          }
+          showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
+            candidates: candidates, reason: "" });
+        });
+      })
+      .catch(function () {
+        if (current !== matchRequest) return;
+        showMatch({ output: matchStatus, section: matchSection, status: "unavailable",
+          reason: "The browser could not reach UniParc; identity match is unavailable." });
+      });
+  }
 
   function summarize() {
     var raw = sequence.value.trim();
@@ -138,6 +254,7 @@
             return;
           }
           showSummary(data);
+          sequenceMatch(data.sequence, data.crc64);
         });
       })
       .catch(function () {

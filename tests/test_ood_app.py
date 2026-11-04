@@ -323,6 +323,8 @@ def test_protein_prop_summary_is_stateless_and_bounded():
     assert response["status"] == "200 OK"
     payload = json.loads(response["body"])
     assert payload["preliminary"] is True
+    assert re.fullmatch(r"[0-9A-F]+", payload["crc64"])
+    assert payload["sequence"] == "ACDEFGHIKLMNPQRSTVWY"
     props = payload["properties"]
     assert props["length_residues"] == 20
     assert props["molecular_weight_da"] > 0

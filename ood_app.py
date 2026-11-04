@@ -260,7 +260,10 @@ def summary_payload(text):
     """Bounded, offline, deterministic sequence calculations for the immediate view.
 
     No retrieval and no network access happen here; the browser supplies the sequence.
+    The CRC64 checksum lets the browser run one bounded exact-sequence UniParc search.
     """
+    from Bio.SeqUtils.CheckSum import crc64
+
     project_src = str(Path(PROJECT) / "src")
     if project_src not in sys.path:
         sys.path.insert(0, project_src)
@@ -272,7 +275,12 @@ def summary_payload(text):
     except SequenceError as exc:
         raise ValueError(str(exc)) from exc
     properties["warnings"] = warnings
-    return {"preliminary": True, "properties": properties}
+    return {
+        "preliminary": True,
+        "crc64": crc64(sequence).removeprefix("CRC-"),
+        "sequence": sequence,
+        "properties": properties,
+    }
 
 
 def validate_and_clean(text):

@@ -99,8 +99,14 @@ The submission page offers two paths:
   `/protein-prop-summary` endpoint, which runs bounded, offline, deterministic
   library calculations (Biopython ProtParam plus the pepstats-equivalent metrics;
   no retrieval, no network, no writes, sub-second for the 5,000-residue limit)
-  and returns composition-derived properties. The result is labelled
-  preliminary.
+  and returns composition-derived properties, including the CRC64 checksum.
+  For a pasted sequence the browser then runs one bounded UniParc checksum
+  search (`size=5`, total capped via the CORS-exposed `X-Total-Results` header)
+  and, when exactly one UniProtKB accession matches after residue-level
+  verification, one further entry fetch to show the resolved identity. Zero or
+  several matches are reported as unresolved/ambiguous with candidates — never
+  guessed. This exact-sequence match mirrors the queued report’s identity logic;
+  it is not a similarity search.
 - **Queue full report.** Unchanged: one PBS job performs UniProt verification,
   metapredict, PDBe retrieval, and the optional Foldseek path, and its report is
   authoritative.
