@@ -2,7 +2,7 @@
 
 import json
 import re
-import sys
+import subprocess
 from http.server import ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +15,8 @@ import ood_app
 import pytest
 
 
-def request(method, path, *, body=b"", cookie="", prefix="/pun/dev/protein-queries"):
+def request(method, path, *, body=b"", cookie="", prefix="/pun/dev/protein-queries",
+            remote_user=None):
     captured = {}
 
     def start(status, headers):
@@ -31,6 +32,8 @@ def request(method, path, *, body=b"", cookie="", prefix="/pun/dev/protein-queri
         "HTTP_COOKIE": cookie,
         "wsgi.input": BytesIO(body),
     }
+    if remote_user is not None:
+        environ["REMOTE_USER"] = remote_user
     captured["body"] = b"".join(ood_app.application(environ, start))
     return captured
 
@@ -48,12 +51,13 @@ def test_manifest_wsgi_and_form_describe_queued_reports():
     assert application is ood_app.application
     form, cookie, csrf = form_cookie()
     assert cookie and form["status"] == "200 OK"
-    assert b"Queues a job to fetch results" in form["body"]
+    assert b"takes precedence over a pasted sequence" in form["body"]
     assert b"Queues a full report job" in form["body"]
     assert b"maximum 5,000 residues" in form["body"]
     assert b"Queue full report" in form["body"]
-    assert b"Immediate preliminary summary" in form["body"]
-    assert b"protein-prop-summary" not in form["body"]  # endpoint is fetched, not linked
+    assert b' name="email"' not in form["body"]  # recipient derives from REMOTE_USER
+    assert b"Immediate preliminary summary" not in form["body"]  # summary removed
+    assert b"protein-prop-summary" not in form["body"]  # endpoint removed with the summary
     assert b"lookup.js" in form["body"]
     policy = form["headers"]["Content-Security-Policy"]
     assert "connect-src 'self' https://rest.uniprot.org" in policy
@@ -153,23 +157,50 @@ def test_reconcile_pbs_status_maps_scheduler_state(monkeypatch, tmp_path):
     assert result["status"] == "running"
 
 
-def test_submission_retains_optional_email(monkeypatch, tmp_path):
+def test_submission_rejects_free_text_email_and_uses_remote_user(monkeypatch, tmp_path):
     monkeypatch.setattr(ood_app, "ROOT", tmp_path)
     monkeypatch.setattr(ood_app, "submit_report_job", lambda _folder: {"status": "queued"})
     _form, cookie, csrf = form_cookie()
-    response = request(
+    free_text = request(
         "POST", "/run",
         body=urlencode({
             "csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY",
-            "email": "user@unsw.edu.au",
+            "email": "attacker@example.com",
         }).encode(),
         cookie=cookie,
     )
-    assert response["status"] == "303 See Other"
-    folder = next(tmp_path.iterdir())
-    assert json.loads((folder / "request.json").read_text()) == {
-        "accession": "", "email": "user@unsw.edu.au"
-    }
+    assert free_text["status"] == "400 Bad Request"
+    for remote, expected in (
+        ("z3374843", "z3374843@unsw.edu.au"),
+        ("z3374843@katana3", "z3374843@unsw.edu.au"),
+    ):
+        response = request(
+            "POST", "/run",
+            body=urlencode({"csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode(),
+            cookie=cookie, remote_user=remote,
+        )
+        assert response["status"] == "303 See Other"
+        token = response["headers"]["Location"].rstrip("/").rsplit("/", 2)[-2]
+        folder = tmp_path / token
+        assert json.loads((folder / "request.json").read_text()) == {
+            "accession": "", "email": expected,
+        }
+    anonymous = request(
+        "POST", "/run",
+        body=urlencode({"csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode(),
+        cookie=cookie,
+    )
+    assert anonymous["status"] == "303 See Other"
+    token = anonymous["headers"]["Location"].rstrip("/").rsplit("/", 2)[-2]
+    assert json.loads((tmp_path / token / "request.json").read_text()) == {"accession": ""}
+    hostile = request(
+        "POST", "/run",
+        body=urlencode({"csrf": csrf, "sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode(),
+        cookie=cookie, remote_user="bad user;address",
+    )
+    assert hostile["status"] == "303 See Other"
+    token = hostile["headers"]["Location"].rstrip("/").rsplit("/", 2)[-2]
+    assert json.loads((tmp_path / token / "request.json").read_text()) == {"accession": ""}
 
 
 def test_submission_failure_removes_partial_request(monkeypatch, tmp_path):
@@ -226,6 +257,104 @@ def test_report_email_is_optional_and_added_to_pbs_job(monkeypatch, tmp_path):
     assert "-m abe" in script
 
 
+def test_derived_recipient_reaches_the_pbs_job(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    (folder / "request.json").write_text(json.dumps({"email": "z3374843@unsw.edu.au"}))
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["args"] = args
+        return SimpleNamespace(returncode=0, stdout="123.server\n")
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    ood_app.submit_report_job(folder)
+    assert seen["args"][seen["args"].index("-M") + 1] == "z3374843@unsw.edu.au"
+    script = (folder / ".report.pbs").read_text()
+    assert "--recipient z3374843@unsw.edu.au" in script
+
+
+def test_scheduler_requests_are_admin_configurable(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
+    monkeypatch.setattr(ood_app, "PBS_WALLTIME", "00:05:00")
+    monkeypatch.setattr(ood_app, "PBS_MEMORY", "1gb")
+    monkeypatch.setattr(ood_app, "PBS_QUEUE", "serial")
+    monkeypatch.setattr(
+        ood_app.subprocess, "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout="123.server\n"),
+    )
+    ood_app.submit_report_job(folder)
+    script = (folder / ".report.pbs").read_text()
+    assert "#PBS -l walltime=00:05:00" in script
+    assert "#PBS -l mem=1gb" in script
+    assert "#PBS -q serial" in script
+
+
+def test_reconcile_recovers_the_job_id_from_the_id_file(monkeypatch, tmp_path):
+    """A job killed inside the running-write must still reconcile via job-id.txt."""
+    folder = tmp_path / "t"
+    folder.mkdir()
+    (folder / "job-id.txt").write_text("123.server\n")
+    monkeypatch.setattr(ood_app, "PBS_STATUS_COMMAND", "/opt/pbs/bin/qstat")
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["args"] = args
+        return SimpleNamespace(returncode=0, stdout="job_state = F\n")
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    result = ood_app.reconcile_pbs_status(folder, {"status": "running"})
+    assert seen["args"] == ["/opt/pbs/bin/qstat", "-f", "123.server"]
+    assert result["status"] == "unavailable"
+    assert json.loads((folder / "job.json").read_text())["status"] == "unavailable"
+    (folder / "report.html").write_text("<html></html>")
+    finished = ood_app.reconcile_pbs_status(folder, {"status": "running"})
+    assert finished["status"] == "complete"
+
+
+def test_qsub_timeout_salvages_the_job_id_and_keeps_state(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
+
+    def fake_run(*_a, **_kw):
+        raise subprocess.TimeoutExpired(cmd="qsub", timeout=15, output=b"999.server\n")
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    payload = ood_app.submit_report_job(folder)
+    assert payload["status"] == "queued" and payload["job_id"] == "999.server"
+    assert (folder / "job-id.txt").read_text().strip() == "999.server"
+    assert folder.is_dir()  # never deleted on an unknown submission outcome
+
+
+def test_qsub_timeout_without_output_records_unknown(monkeypatch, tmp_path):
+    folder = tmp_path / "report"
+    folder.mkdir()
+    (folder / "input.fasta").write_text("ACDEFGHIKLMNPQRSTVWY")
+    monkeypatch.setattr(ood_app, "EXTENDED_PYTHON", "/compute/project/.venv/bin/python")
+    monkeypatch.setattr(ood_app, "PBS_STATUS_COMMAND", "/definitely/missing/qstat")
+
+    def fake_run(*_a, **_kw):
+        raise subprocess.TimeoutExpired(cmd="qsub", timeout=15)
+
+    monkeypatch.setattr(ood_app.subprocess, "run", fake_run)
+    payload = ood_app.submit_report_job(folder)
+    assert payload["status"] == "unknown"
+    job = json.loads((folder / "job.json").read_text())
+    assert job["status"] == "unknown" and "timed out" in job["reason"]
+    assert folder.is_dir() and not list(folder.glob(".submission-reserved"))
+    page = ood_app.pending_page("/pun/dev/protein-queries", "a" * 32, folder)
+    assert "Submission outcome unknown" in page
+    assert "http-equiv='refresh'" in page and "Submit a new report" in page
+    assert "Open report when ready" in page
+
+
 def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     folder = tmp_path / "report"
     folder.mkdir()
@@ -253,7 +382,10 @@ def test_submit_report_job_writes_one_full_pbs_job(monkeypatch, tmp_path):
     assert "#PBS -N protein-report" in script
     assert "--foldseek" in script and "--accession Q12345" in script
     assert "--lightweight" not in script and "ssh" not in script
-    assert "#PBS -l ncpus=1" in script and "#PBS -l mem=4gb" in script
+    assert "#PBS -l ncpus=1" in script and "#PBS -l mem=2gb" in script
+    assert "#PBS -l walltime=00:10:00" in script
+    assert '{"status":"running","job_id":"%s"}' in script
+    assert "${PBS_JOBID:-}" in script
     assert "#PBS -m abe" in script
 
 
@@ -316,60 +448,6 @@ def test_every_report_figure_is_allowed_and_path_traversal_is_blocked():
     assert served and served <= set(ood_app.FILES)
     traversal = request("GET", "/results/" + "a" * 32 + "/../../input.fasta")
     assert traversal["status"] == "404 Not Found"
-
-
-def test_summary_does_not_require_matplotlib(monkeypatch):
-    """The Passenger interpreter has no matplotlib; the summary must still work."""
-    blocked = ["matplotlib", "matplotlib.pyplot", "matplotlib.lines", "matplotlib.patches"]
-    saved = {name: sys.modules.pop(name, None) for name in blocked}
-    for name in blocked:
-        sys.modules[name] = None  # any import attempt now raises ImportError
-    try:
-        payload = ood_app.summary_payload(">sum\nACDEFGHINSTKLMNPQRSTVWY")
-    finally:
-        for name, original in saved.items():
-            if original is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = original
-    assert payload["predicted_tracks"]["N-glycan sequon (predicted)"][0][:2] == [9, 9]
-
-
-def test_protein_prop_summary_is_stateless_and_bounded():
-    _form, cookie, csrf = form_cookie()
-    unauthorised = request(
-        "POST", "/protein-prop-summary",
-        body=urlencode({"sequence": "ACDEFGHIKLMNPQRSTVWY"}).encode(),
-    )
-    assert unauthorised["status"] == "403 Forbidden"
-    response = request(
-        "POST", "/protein-prop-summary",
-        body=urlencode({"csrf": csrf, "sequence": ">sum\nACDEFGHINSTKLMNPQRSTVWY"}).encode(),
-        cookie=cookie,
-    )
-    assert response["status"] == "200 OK"
-    payload = json.loads(response["body"])
-    assert payload["preliminary"] is True
-    assert re.fullmatch(r"[0-9A-F]+", payload["crc64"])
-    assert payload["sequence"] == "ACDEFGHINSTKLMNPQRSTVWY"
-    assert payload["plot"]["window"] == 19
-    assert len(payload["plot"]["points"]) <= 240
-    assert payload["plot"]["points"][0][0] == 1
-    tracks = payload["predicted_tracks"]
-    assert "N-glycan sequon (predicted)" in tracks
-    assert tracks["N-glycan sequon (predicted)"][0][:2] == [9, 9]
-    assert all(len(items) <= 400 for items in tracks.values())
-    props = payload["properties"]
-    assert props["length_residues"] == 23
-    assert props["molecular_weight_da"] > 0
-    assert "inclusion_body_propensity" in props
-    invalid = request(
-        "POST", "/protein-prop-summary",
-        body=urlencode({"csrf": csrf, "sequence": ">a\nACD\n>b\nEFG"}).encode(),
-        cookie=cookie,
-    )
-    assert invalid["status"] == "400 Bad Request"
-    assert json.loads(invalid["body"])["error"]
 
 
 def test_local_prototype_serves_every_report_figure(tmp_path):

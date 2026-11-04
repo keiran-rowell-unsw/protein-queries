@@ -1,36 +1,23 @@
-/* Preliminary browser-side UniProt identity lookup and immediate sequence summary.
+/* Browser-side UniProt identity preview.
  *
- * Retrieval: the browser (not the PUN) contacts rest.uniprot.org once per accession;
- * the JSON response already contains the canonical sequence, so no second fetch is
- * needed. Calculations: the PUN's /protein-prop-summary endpoint runs bounded,
- * offline, deterministic library calculations (no retrieval) on the supplied
- * sequence. Everything is rendered with text-safe DOM APIs; fetched JSON is never
- * inserted as HTML. Both displays are preliminary: the queued PBS job remains the
- * authoritative, verified report.
+ * Retrieval: the browser (not the PUN) contacts rest.uniprot.org once per typed
+ * accession, so the submitter can confirm the right protein before queueing.
+ * Everything is rendered with text-safe DOM APIs; fetched JSON is never inserted
+ * as HTML. The preview is preliminary: the queued PBS job verifies identity (exact
+ * sequence when one is pasted, accession precedence otherwise) and produces the
+ * authoritative report and all of its figures on the compute node.
  */
 (function () {
   "use strict";
 
   var UNIPROT = "https://rest.uniprot.org/uniprotkb/";
   var ACCESSION = /^([A-Za-z0-9]{6}|[A-Za-z0-9]{10})(-[0-9]{1,2})?$/;
-  var UNIPARC = "https://rest.uniprot.org/uniparc/search";
   var input = document.getElementById("accession");
   var output = document.getElementById("lookup");
-  var sequence = document.getElementById("sequence");
-  var summarySection = document.getElementById("summary");
-  var summaryButton = document.getElementById("summarize");
-  var csrfField = document.getElementById("csrf");
-  var prefix = document.body.getAttribute("data-prefix") || "";
-  if (!input || !output || !sequence || !summarySection || !summaryButton || !csrfField) return;
+  if (!input || !output) return;
 
   var timer = null;
   var request = 0;
-  var matchRequest = 0;
-  var canonical = ""; // canonical sequence from the once-off UniProt fetch
-  var entryFeatures = []; // features from the fetched entry, for annotated map tracks
-  var lastPayload = null; // re-render the summary when identity arrives later
-  var matchSection = summarySection; // match result renders inside the summary card
-  var matchStatus = document.createElement("div");
 
   function clear(node) {
     while (node.firstChild) node.removeChild(node.firstChild);
@@ -67,411 +54,12 @@
     if (preliminary.organism) line(output, "Organism", preliminary.organism);
     if (preliminary.length) line(output, "Length", preliminary.length + " residues");
     if (preliminary.reviewed) line(output, "Reviewed", preliminary.reviewed);
-    paragraph(output, "Use “Immediate preliminary summary” for sequence properties, or “Queue full report” for the verified PBS report.");
+    paragraph(output, "Queue the full report for verified annotations, structures, and figures.");
   }
 
   function message(text) {
     clear(output);
     paragraph(output, text, "hint");
-  }
-
-  function curve(container, title, points, xLabel, options) {
-    var width = 640, height = 160, pad = 34;
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", title);
-    svg.style.width = "100%";
-    svg.style.height = "auto";
-    var xs = points.map(function (p) { return p[0]; });
-    var ys = points.map(function (p) { return p[1]; });
-    var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
-    var yMin = options.yMin !== undefined ? options.yMin : Math.min.apply(null, ys);
-    var yMax = options.yMax !== undefined ? options.yMax : Math.max.apply(null, ys);
-    if (yMax === yMin) yMax = yMin + 1;
-    var px = function (x) { return pad + (x - xMin) / (xMax - xMin) * (width - pad - 10); };
-    var py = function (y) { return height - pad - (y - yMin) / (yMax - yMin) * (height - pad - 14); };
-    var polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    polyline.setAttribute("fill", "none");
-    polyline.setAttribute("stroke", options.color || "#0e7490");
-    polyline.setAttribute("stroke-width", "2");
-    polyline.setAttribute("points", points.map(function (p) {
-      return px(p[0]).toFixed(1) + "," + py(p[1]).toFixed(1);
-    }).join(" "));
-    svg.appendChild(polyline);
-    if (options.zero !== undefined) {
-      var zero = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      zero.setAttribute("x1", pad); zero.setAttribute("x2", width - 10);
-      zero.setAttribute("y1", py(options.zero)); zero.setAttribute("y2", py(options.zero));
-      zero.setAttribute("stroke", "#94a3b8"); zero.setAttribute("stroke-dasharray", "4 4");
-      svg.appendChild(zero);
-      var zeroLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      zeroLabel.setAttribute("x", 4); zeroLabel.setAttribute("y", py(options.zero) + 4);
-      zeroLabel.setAttribute("font-size", "11"); zeroLabel.setAttribute("fill", "#64748b");
-      zeroLabel.textContent = options.zeroLabel || "0";
-      svg.appendChild(zeroLabel);
-    }
-    var caption = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    caption.setAttribute("x", pad); caption.setAttribute("y", height - 8);
-    caption.setAttribute("font-size", "11"); caption.setAttribute("fill", "#64748b");
-    caption.textContent = xLabel;
-    svg.appendChild(caption);
-    var heading = document.createElement("h3");
-    heading.textContent = title;
-    container.appendChild(heading);
-    container.appendChild(svg);
-    paragraph(container, options.note, "hint");
-  }
-
-  var TRACK_ORDER = [
-    "Glycosylation (annotated)", "N-glycan sequon (predicted)", "Other PTM",
-    "Disulfide bond", "Active / binding site", "Transmembrane / topology",
-    "Domain", "Deamidation risk",
-  ];
-  var TRACK_COLORS = {
-    "Glycosylation (annotated)": "#0e7490", "N-glycan sequon (predicted)": "#0e7490",
-    "Other PTM": "#7c3aed", "Disulfide bond": "#b45309",
-    "Active / binding site": "#dc2626", "Transmembrane / topology": "#2563eb",
-    "Domain": "#475569", "Deamidation risk": "#ca8a04",
-  };
-  var SPAN_TRACKS = { "Transmembrane / topology": 1, "Domain": 1 };
-  var FEATURE_TRACKS = {
-    "Glycosylation (annotated)": ["Glycosylation"],
-    "Other PTM": ["Modified residue", "Lipidation", "Cross-link", "Non-standard residue"],
-    "Disulfide bond": ["Disulfide bond"],
-    "Active / binding site": ["Active site", "Binding site", "Site", "Metal binding",
-      "Calcium binding", "Nucleotide binding", "DNA binding"],
-    "Transmembrane / topology": ["Transmembrane", "Intramembrane", "Topological domain",
-      "Signal", "Transit peptide"],
-    "Domain": ["Domain", "Repeat", "Zinc finger", "Coiled coil", "Region", "Motif"],
-  };
-  var MAX_RENDERED_PER_TRACK = 400;
-
-  function classifyFeatures(features) {
-    var tracks = {};
-    TRACK_ORDER.forEach(function (name) {
-      if (FEATURE_TRACKS[name]) tracks[name] = [];
-    });
-    (features || []).forEach(function (feature) {
-      var start = feature.start, end = feature.end;
-      if (typeof start !== "number" || start < 1) return;
-      var stop = typeof end === "number" && end >= start ? end : start;
-      var detail = String(feature.description || feature.type || "");
-      Object.keys(FEATURE_TRACKS).forEach(function (name) {
-        if (FEATURE_TRACKS[name].indexOf(feature.type) >= 0) {
-          (tracks[name] = tracks[name] || []).push([start, stop, detail]);
-        }
-      });
-    });
-    return tracks;
-  }
-
-  function positionMap(container, length, annotated, predicted) {
-    var tracks = TRACK_ORDER.map(function (name) {
-      return {
-        name: name,
-        predicted: name.indexOf("predicted") >= 0 || name.indexOf("risk") >= 0,
-        items: (annotated[name] || predicted[name] || []).slice(0, MAX_RENDERED_PER_TRACK),
-        truncated: ((annotated[name] || []).length + (predicted[name] || []).length)
-          > MAX_RENDERED_PER_TRACK,
-      };
-    }).filter(function (track) { return track.items.length > 0; });
-    var heading = document.createElement("h3");
-    heading.textContent = "Preliminary position map";
-    container.appendChild(heading);
-    if (!tracks.length) {
-      paragraph(container,
-        "No annotated features were available and no sequon or deamidation motif was "
-        + "found. The queued report renders the full map.", "hint");
-      return;
-    }
-    var width = 640, rowHeight = 26, top = 26;
-    var height = top + tracks.length * rowHeight + 34;
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "Preliminary residue position map");
-    svg.style.width = "100%";
-    svg.style.height = "auto";
-    var px = function (position) {
-      return 8 + (position - 1) / Math.max(1, length - 1) * (width - 16);
-    };
-    [1, Math.round(length / 2), length].forEach(function (tick) {
-      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", px(tick)); line.setAttribute("x2", px(tick));
-      line.setAttribute("y1", top - 8); line.setAttribute("y2", top + tracks.length * rowHeight);
-      line.setAttribute("stroke", "#cbd5e1");
-      svg.appendChild(line);
-      var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      label.setAttribute("x", px(tick)); label.setAttribute("y", top - 12);
-      label.setAttribute("font-size", "10"); label.setAttribute("fill", "#64748b");
-      label.setAttribute("text-anchor", tick === 1 ? "start" : (tick === length ? "end" : "middle"));
-      label.textContent = String(tick);
-      svg.appendChild(label);
-    });
-    tracks.forEach(function (track, row) {
-      var y = top + row * rowHeight + rowHeight / 2;
-      var name = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      name.setAttribute("x", 8); name.setAttribute("y", y + 3);
-      name.setAttribute("font-size", "10");
-      name.setAttribute("fill", TRACK_COLORS[track.name] || "#334155");
-      name.textContent = track.name + (track.truncated ? " (first " + MAX_RENDERED_PER_TRACK + ")" : "");
-      svg.appendChild(name);
-      var color = TRACK_COLORS[track.name] || "#334155";
-      track.items.forEach(function (item) {
-        var start = item[0], end = item[1], detail = String(item[2] || track.name);
-        var marker;
-        if (track.name === "Disulfide bond") {
-          [start, end].forEach(function (position) {
-            var tick = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            tick.setAttribute("x1", px(position)); tick.setAttribute("x2", px(position));
-            tick.setAttribute("y1", y - 7); tick.setAttribute("y2", y + 7);
-            tick.setAttribute("stroke", color); tick.setAttribute("stroke-width", "2");
-            var tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
-            tip.textContent = detail;
-            tick.appendChild(tip);
-            svg.appendChild(tick);
-          });
-          return;
-        }
-        if (SPAN_TRACKS[track.name] && end > start) {
-          marker = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-          marker.setAttribute("x", px(start));
-          marker.setAttribute("width", Math.max(2, px(end) - px(start)));
-          marker.setAttribute("y", y - 6); marker.setAttribute("height", 12);
-          marker.setAttribute("fill", track.predicted ? "none" : color);
-          marker.setAttribute("stroke", color); marker.setAttribute("stroke-width", "1.5");
-        } else {
-          marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          marker.setAttribute("cx", px(start)); marker.setAttribute("cy", y); marker.setAttribute("r", 5);
-          marker.setAttribute("fill", track.predicted ? "none" : color);
-          marker.setAttribute("stroke", color); marker.setAttribute("stroke-width", "1.5");
-        }
-        var tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
-        tip.textContent = detail + " (" + start + (end !== start ? "-" + end : "") + ")";
-        marker.appendChild(tip);
-        svg.appendChild(marker);
-      });
-    });
-    container.appendChild(svg);
-    paragraph(container,
-      "Filled markers are annotated in the retrieved UniProt entry; hollow markers are "
-      + "sequence-pattern predictions with unknown occupancy. Preliminary only — the "
-      + "queued report renders the authoritative map.", "hint");
-  }
-
-  function showSummary(payload) {
-    lastPayload = payload;
-    var props = payload.properties || {};
-    clear(summarySection);
-    summarySection.hidden = false;
-    var heading = document.createElement("h2");
-    heading.textContent = "Preliminary sequence summary";
-    summarySection.appendChild(heading);
-    paragraph(summarySection,
-      "Computed now from the sequence alone; not retrieved, not verified against UniProt, "
-      + "and not a substitute for the queued report.",
-      "hint");
-    if (identity.name) line(summarySection, "Protein", identity.name);
-    if (identity.organism) line(summarySection, "Organism", identity.organism);
-    if (props.length_residues) line(summarySection, "Length", props.length_residues + " residues");
-    if (props.molecular_weight_da) line(summarySection, "Molecular weight", props.molecular_weight_da + " Da");
-    if (props.isoelectric_point !== undefined) line(summarySection, "Isoelectric point", props.isoelectric_point);
-    if (props.net_charge_pH_7 !== undefined) line(summarySection, "Net charge at pH 7", props.net_charge_pH_7);
-    if (props.gravy_kyte_doolittle !== undefined) {
-      line(summarySection, "Average hydropathy (GRAVY)", props.gravy_kyte_doolittle);
-    }
-    if (props.instability_index_guruprasad !== undefined) {
-      line(summarySection, "Instability index", props.instability_index_guruprasad);
-    }
-    if (props["molar_extinction_coefficient_M-1cm-1"]) {
-      var ext = props["molar_extinction_coefficient_M-1cm-1"];
-      line(summarySection, "A280 (reduced / oxidised)", ext.reduced + " / " + ext.oxidised + " M⁻¹cm⁻¹");
-    }
-    if (props.inclusion_body_propensity) {
-      var body = props.inclusion_body_propensity;
-      line(summarySection, "Inclusion-body flag", String(body["class"] || "").replace("likely_", "likely "));
-    }
-    var warnings = props.warnings || [];
-    for (var i = 0; i < warnings.length; i++) paragraph(summarySection, "Note: " + warnings[i], "hint");
-    paragraph(summarySection,
-      "The queued full report adds verified UniProt annotations, PDBe structures, "
-      + "disorder prediction, and structural-neighbour search.");
-    if (payload.plot && payload.plot.points && payload.plot.points.length > 1) {
-      curve(summarySection, "Hydropathy along the sequence", payload.plot.points,
-        "Residue 1 – " + props.length_residues + " (" + payload.plot.scale + ", window "
-        + payload.plot.window + ")",
-        { zero: 0, zeroLabel: "0", color: "#0e7490",
-          note: "Positive values are more hydrophobic; this is a plot of calculated "
-            + "values, not a new measurement." });
-    }
-    var charge = props.charge_vs_ph && props.charge_vs_ph.ph_to_net_charge;
-    if (charge) {
-      var chargePoints = Object.keys(charge).map(function (pH) {
-        return [parseFloat(pH), charge[pH]];
-      }).sort(function (a, b) { return a[0] - b[0]; });
-      curve(summarySection, "Net charge versus pH", chargePoints, "pH 3 – 11",
-        { color: "#7c3aed", zero: 0, zeroLabel: "0",
-          note: "Henderson–Hasselbalch model; charges near the pI are the least reliable." });
-    }
-    clear(matchStatus);
-    matchSection.appendChild(matchStatus);
-    positionMap(summarySection, props.length_residues,
-      classifyFeatures(entryFeatures), payload.predicted_tracks || {});
-  }
-
-  var identity = {};
-
-  function showMatch(match) {
-    clear(match.output);
-    match.section.hidden = false;
-    if (match.status === "verified") {
-      var link = document.createElement("a");
-      link.href = match.uniprot_url;
-      link.rel = "noopener";
-      link.textContent = match.accession;
-      var heading = document.createElement("strong");
-      heading.appendChild(document.createTextNode("Exact UniParc match: "));
-      heading.appendChild(link);
-      match.output.appendChild(heading);
-      if (match.name) line(match.output, "Protein", match.name);
-      if (match.organism) line(match.output, "Organism", match.organism);
-      if (match.reviewed) line(match.output, "Reviewed", match.reviewed);
-      paragraph(match.output,
-        "The pasted sequence is identical to this UniProtKB entry (CRC64 "
-        + match.checksum + ", verified residue by residue).", "hint");
-    } else if (match.status === "ambiguous") {
-      paragraph(match.output,
-        "Several UniProtKB entries share this exact sequence. Enter the accession "
-        + "you want to annotate. Candidates: " + match.candidates.join(", "), "hint");
-    } else {
-      paragraph(match.output, match.reason, "hint");
-    }
-  }
-
-  function fetchEntry(accession, checksum, match) {
-    return fetch(UNIPROT + encodeURIComponent(accession) + ".json")
-      .then(function (response) {
-        if (!response.ok) return null;
-        return response.json();
-      })
-      .then(function (entry) {
-        var description = (entry && entry.proteinDescription) || {};
-        var recommended = description.recommendedName || {};
-        match.accession = accession;
-        match.checksum = checksum;
-        match.uniprot_url = "https://www.uniprot.org/uniprotkb/" + accession + "/entry";
-        match.name = (recommended.fullName || {}).value || "";
-        match.organism = (((entry || {}).organism || {}).scientificName) || "";
-        match.reviewed = entry && entry.entryType ? String(entry.entryType) : "";
-        entryFeatures = (entry && entry.features) || [];
-        showMatch(match);
-        if (lastPayload) showSummary(lastPayload);
-      });
-  }
-
-  function sequenceMatch(sequence, crc) {
-    matchStatus.textContent = "Searching UniParc for an exact sequence match…";
-    var current = ++matchRequest;
-    fetch(
-      UNIPARC + "?query=checksum%3A" + encodeURIComponent(crc)
-      + "&format=json&size=5"
-    )
-      .then(function (response) {
-        if (current !== matchRequest) return;
-        if (!response.ok) {
-          showMatch({ output: matchStatus, section: matchSection, status: "unavailable",
-            reason: "The exact-sequence search is unavailable right now." });
-          return;
-        }
-        var total = parseInt(response.headers.get("X-Total-Results") || "0", 10);
-        return response.json().then(function (payload) {
-          if (current !== matchRequest) return;
-          if (total > 5) {
-            showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
-              candidates: ["too many to list"],
-              reason: "Too many checksum hits to verify safely." });
-            return;
-          }
-          var candidates = [];
-          var results = (payload && payload.results) || [];
-          for (var i = 0; i < results.length; i++) {
-            var seq = results[i].sequence || {};
-            if (seq.value !== sequence || seq.length !== sequence.length) continue;
-            var accessions = results[i].uniProtKBAccessions || [];
-            for (var j = 0; j < accessions.length; j++) {
-              var acc = String(accessions[j]).split(".", 1)[0];
-              if (/^[A-Z0-9]{6,10}$/.test(acc) && candidates.indexOf(acc) < 0) {
-                candidates.push(acc);
-              }
-            }
-          }
-          if (!candidates.length) {
-            showMatch({ output: matchStatus, section: matchSection, status: "not_found",
-              reason: "No exact UniProt sequence match was found; identity is unresolved. "
-                + "This search is exact, not a similarity search." });
-            return;
-          }
-          if (candidates.length > 4) {
-            showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
-              candidates: candidates.slice(0, 8),
-              reason: "Several UniProtKB accessions share this exact sequence." });
-            return;
-          }
-          if (candidates.length === 1) {
-            fetchEntry(candidates[0], crc,
-              { output: matchStatus, section: matchSection, status: "verified" });
-            return;
-          }
-          showMatch({ output: matchStatus, section: matchSection, status: "ambiguous",
-            candidates: candidates, reason: "" });
-        });
-      })
-      .catch(function () {
-        if (current !== matchRequest) return;
-        showMatch({ output: matchStatus, section: matchSection, status: "unavailable",
-          reason: "The browser could not reach UniParc; identity match is unavailable." });
-      });
-  }
-
-  function summarize() {
-    var raw = sequence.value.trim();
-    var payloadSequence = raw || canonical;
-    if (!payloadSequence) {
-      clear(summarySection);
-      summarySection.hidden = false;
-      paragraph(summarySection,
-        "Enter a sequence, or look up an accession first, then run the immediate summary.", "hint");
-      return;
-    }
-    var body = new URLSearchParams();
-    body.set("csrf", csrfField.value);
-    body.set("sequence", payloadSequence);
-    summaryButton.disabled = true;
-    fetch(prefix + "/protein-prop-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    })
-      .then(function (response) {
-        return response.json().then(function (data) {
-          summaryButton.disabled = false;
-          if (!response.ok) {
-            clear(summarySection);
-            summarySection.hidden = false;
-            paragraph(summarySection, data.error || "The immediate summary failed.", "hint");
-            return;
-          }
-          showSummary(data);
-          sequenceMatch(data.sequence, data.crc64);
-        });
-      })
-      .catch(function () {
-        summaryButton.disabled = false;
-        clear(summarySection);
-        summarySection.hidden = false;
-        paragraph(summarySection, "The immediate summary is unavailable; queue the full report.", "hint");
-      });
   }
 
   function lookup(accession) {
@@ -506,10 +94,6 @@
             || "";
           var organism = (((entry.organism || {}).scientificName) || "");
           var reviewed = entry.entryType ? String(entry.entryType) : "";
-          canonical = (entry.sequence && entry.sequence.value) || "";
-          entryFeatures = entry.features || [];
-          identity = { name: name, organism: organism };
-          if (lastPayload) showSummary(lastPayload);
           showIdentity({
             uniprot_url: "https://www.uniprot.org/uniprotkb/" + primary + "/entry",
             name: name,
@@ -530,5 +114,4 @@
     if (timer) window.clearTimeout(timer);
     timer = window.setTimeout(function () { lookup(value); }, 400);
   });
-  summaryButton.addEventListener("click", summarize);
 })();
