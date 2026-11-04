@@ -45,8 +45,8 @@ def test_manifest_wsgi_and_form_describe_queued_reports():
     from passenger_wsgi import application
 
     assert application is ood_app.application
-    form, _cookie, _csrf = form_cookie()
-    assert form["status"] == "200 OK"
+    form, cookie, csrf = form_cookie()
+    assert cookie and form["status"] == "200 OK"
     assert b"Queues a job to fetch results" in form["body"]
     assert b"Queues a full report job" in form["body"]
     assert b"maximum 5,000 residues" in form["body"]
@@ -57,6 +57,15 @@ def test_manifest_wsgi_and_form_describe_queued_reports():
     policy = form["headers"]["Content-Security-Policy"]
     assert "connect-src 'self' https://rest.uniprot.org" in policy
     assert "script-src 'self'" in policy
+    # The hidden field must carry the cookie token and the action must be well formed;
+    # a mismatch here silently breaks every browser submission (regression guard).
+    hidden = re.search(
+        rb'name="csrf" id="csrf" value="([0-9a-f]{32})"', form["body"]
+    )
+    assert hidden and hidden.group(1).decode() == csrf
+    action = re.search(rb'action="([^"]*)/run"', form["body"])
+    assert action and action.group(1).decode() == "/pun/dev/protein-queries"
+    assert b'data-prefix="/pun/dev/protein-queries"' in form["body"]
 
 
 def test_browser_lookup_asset_is_served_and_traversal_blocked():

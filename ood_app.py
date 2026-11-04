@@ -76,7 +76,7 @@ def page(prefix, csrf, message=""):
 <div class="field"><label for="sequence">Protein sequence</label><span class="hint">Queues a full report job. FASTA or bare sequence; maximum 5,000 residues (header and whitespace excluded).</span><textarea id="sequence" name="sequence" rows="12" maxlength="100000" spellcheck="false" placeholder=">protein_name&#10;MKT…"></textarea></div>
 <button type="button" id="summarize">Immediate preliminary summary</button>
 <button type="submit">Queue full report</button>
-</form><section id="summary" hidden aria-live="polite"></section></main></div><script src="%s/lookup.js" defer></script></body></html>""" % (message, prefix, html.escape(csrf, quote=True), prefix, prefix)
+</form><section id="summary" hidden aria-live="polite"></section></main></div><script src="%s/lookup.js" defer></script></body></html>""" % (prefix, message, prefix, html.escape(csrf, quote=True), prefix)
 
 
 def validate_sequence(text):
