@@ -73,6 +73,54 @@
     paragraph(output, text, "hint");
   }
 
+  function curve(container, title, points, xLabel, options) {
+    var width = 640, height = 160, pad = 34;
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", title);
+    svg.style.width = "100%";
+    svg.style.height = "auto";
+    var xs = points.map(function (p) { return p[0]; });
+    var ys = points.map(function (p) { return p[1]; });
+    var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
+    var yMin = options.yMin !== undefined ? options.yMin : Math.min.apply(null, ys);
+    var yMax = options.yMax !== undefined ? options.yMax : Math.max.apply(null, ys);
+    if (yMax === yMin) yMax = yMin + 1;
+    var px = function (x) { return pad + (x - xMin) / (xMax - xMin) * (width - pad - 10); };
+    var py = function (y) { return height - pad - (y - yMin) / (yMax - yMin) * (height - pad - 14); };
+    var polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", options.color || "#0e7490");
+    polyline.setAttribute("stroke-width", "2");
+    polyline.setAttribute("points", points.map(function (p) {
+      return px(p[0]).toFixed(1) + "," + py(p[1]).toFixed(1);
+    }).join(" "));
+    svg.appendChild(polyline);
+    if (options.zero !== undefined) {
+      var zero = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      zero.setAttribute("x1", pad); zero.setAttribute("x2", width - 10);
+      zero.setAttribute("y1", py(options.zero)); zero.setAttribute("y2", py(options.zero));
+      zero.setAttribute("stroke", "#94a3b8"); zero.setAttribute("stroke-dasharray", "4 4");
+      svg.appendChild(zero);
+      var zeroLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      zeroLabel.setAttribute("x", 4); zeroLabel.setAttribute("y", py(options.zero) + 4);
+      zeroLabel.setAttribute("font-size", "11"); zeroLabel.setAttribute("fill", "#64748b");
+      zeroLabel.textContent = options.zeroLabel || "0";
+      svg.appendChild(zeroLabel);
+    }
+    var caption = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    caption.setAttribute("x", pad); caption.setAttribute("y", height - 8);
+    caption.setAttribute("font-size", "11"); caption.setAttribute("fill", "#64748b");
+    caption.textContent = xLabel;
+    svg.appendChild(caption);
+    var heading = document.createElement("h3");
+    heading.textContent = title;
+    container.appendChild(heading);
+    container.appendChild(svg);
+    paragraph(container, options.note, "hint");
+  }
+
   function showSummary(payload) {
     var props = payload.properties || {};
     clear(summarySection);
@@ -109,6 +157,23 @@
     paragraph(summarySection,
       "The queued full report adds verified UniProt annotations, PDBe structures, "
       + "disorder prediction, and structural-neighbour search.");
+    if (payload.plot && payload.plot.points && payload.plot.points.length > 1) {
+      curve(summarySection, "Hydropathy along the sequence", payload.plot.points,
+        "Residue 1 – " + props.length_residues + " (" + payload.plot.scale + ", window "
+        + payload.plot.window + ")",
+        { zero: 0, zeroLabel: "0", color: "#0e7490",
+          note: "Positive values are more hydrophobic; this is a plot of calculated "
+            + "values, not a new measurement." });
+    }
+    var charge = props.charge_vs_ph && props.charge_vs_ph.ph_to_net_charge;
+    if (charge) {
+      var chargePoints = Object.keys(charge).map(function (pH) {
+        return [parseFloat(pH), charge[pH]];
+      }).sort(function (a, b) { return a[0] - b[0]; });
+      curve(summarySection, "Net charge versus pH", chargePoints, "pH 3 – 11",
+        { color: "#7c3aed", zero: 0, zeroLabel: "0",
+          note: "Henderson–Hasselbalch model; charges near the pI are the least reliable." });
+    }
     clear(matchStatus);
     matchSection.appendChild(matchStatus);
   }

@@ -334,6 +334,9 @@ def test_protein_prop_summary_is_stateless_and_bounded():
     assert payload["preliminary"] is True
     assert re.fullmatch(r"[0-9A-F]+", payload["crc64"])
     assert payload["sequence"] == "ACDEFGHIKLMNPQRSTVWY"
+    assert payload["plot"]["window"] == 19
+    assert len(payload["plot"]["points"]) <= 240
+    assert payload["plot"]["points"][0][0] == 1
     props = payload["properties"]
     assert props["length_residues"] == 20
     assert props["molecular_weight_da"] > 0

@@ -267,7 +267,7 @@ def summary_payload(text):
     project_src = str(Path(PROJECT) / "src")
     if project_src not in sys.path:
         sys.path.insert(0, project_src)
-    from protein_agent.properties import SequenceError, compute_properties
+    from protein_agent.properties import SequenceError, compute_properties, hydropathy_profile
 
     try:
         sequence, warnings = validate_and_clean(text)
@@ -275,11 +275,20 @@ def summary_payload(text):
     except SequenceError as exc:
         raise ValueError(str(exc)) from exc
     properties["warnings"] = warnings
+    # Downsample the profile for plotting only; full resolution stays in the queued report.
+    profile = hydropathy_profile(sequence)
+    stride = max(1, (len(profile) + 239) // 240)
+    plot = {
+        "window": 19,
+        "scale": "Kyte-Doolittle centred moving average",
+        "points": [[position, value] for position, value in profile[::stride]],
+    }
     return {
         "preliminary": True,
         "crc64": crc64(sequence).removeprefix("CRC-"),
         "sequence": sequence,
         "properties": properties,
+        "plot": plot,
     }
 
 

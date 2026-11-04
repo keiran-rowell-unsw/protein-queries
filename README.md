@@ -100,6 +100,10 @@ The submission page offers two paths:
   library calculations (Biopython ProtParam plus the pepstats-equivalent metrics;
   no retrieval, no network, no writes, sub-second for the 5,000-residue limit)
   and returns composition-derived properties, including the CRC64 checksum.
+  The response also carries a downsampled Kyte-Doolittle hydropathy profile and
+  the charge-versus-pH series, which the page renders as inline SVG curves; the
+  numbers come from the same library calculations as the queued report, and the
+  full-resolution plots remain part of the PBS output.
   For a pasted sequence the browser then runs one bounded UniParc checksum
   search (`size=5`, total capped via the CORS-exposed `X-Total-Results` header)
   and, when exactly one UniProtKB accession matches after residue-level
