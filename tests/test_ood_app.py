@@ -326,19 +326,23 @@ def test_protein_prop_summary_is_stateless_and_bounded():
     assert unauthorised["status"] == "403 Forbidden"
     response = request(
         "POST", "/protein-prop-summary",
-        body=urlencode({"csrf": csrf, "sequence": ">sum\nACDEFGHIKLMNPQRSTVWY"}).encode(),
+        body=urlencode({"csrf": csrf, "sequence": ">sum\nACDEFGHINSTKLMNPQRSTVWY"}).encode(),
         cookie=cookie,
     )
     assert response["status"] == "200 OK"
     payload = json.loads(response["body"])
     assert payload["preliminary"] is True
     assert re.fullmatch(r"[0-9A-F]+", payload["crc64"])
-    assert payload["sequence"] == "ACDEFGHIKLMNPQRSTVWY"
+    assert payload["sequence"] == "ACDEFGHINSTKLMNPQRSTVWY"
     assert payload["plot"]["window"] == 19
     assert len(payload["plot"]["points"]) <= 240
     assert payload["plot"]["points"][0][0] == 1
+    tracks = payload["predicted_tracks"]
+    assert "N-glycan sequon (predicted)" in tracks
+    assert tracks["N-glycan sequon (predicted)"][0][:2] == [9, 9]
+    assert all(len(items) <= 400 for items in tracks.values())
     props = payload["properties"]
-    assert props["length_residues"] == 20
+    assert props["length_residues"] == 23
     assert props["molecular_weight_da"] > 0
     assert "inclusion_body_propensity" in props
     invalid = request(

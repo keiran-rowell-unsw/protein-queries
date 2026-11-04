@@ -103,7 +103,12 @@ The submission page offers two paths:
   The response also carries a downsampled Kyte-Doolittle hydropathy profile and
   the charge-versus-pH series, which the page renders as inline SVG curves; the
   numbers come from the same library calculations as the queued report, and the
-  full-resolution plots remain part of the PBS output.
+  full-resolution plots remain part of the PBS output. The summary also renders a
+  **preliminary position map** as inline SVG: filled tracks are features annotated
+  in the retrieved UniProt entry (held browser-side), hollow tracks are
+  library-predicted N-glycan sequons and deamidation motifs computed by the PUN,
+  and the two provenances are never mixed on one marker. The queued report renders
+  the authoritative, full-resolution map.
   For a pasted sequence the browser then runs one bounded UniParc checksum
   search (`size=5`, total capped via the CORS-exposed `X-Total-Results` header)
   and, when exactly one UniProtKB accession matches after residue-level

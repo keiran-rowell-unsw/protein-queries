@@ -267,7 +267,13 @@ def summary_payload(text):
     project_src = str(Path(PROJECT) / "src")
     if project_src not in sys.path:
         sys.path.insert(0, project_src)
-    from protein_agent.properties import SequenceError, compute_properties, hydropathy_profile
+    from protein_agent.position_map import MAX_RENDERED_PER_TRACK, build_tracks
+    from protein_agent.properties import (
+        SequenceError,
+        compute_properties,
+        hydropathy_profile,
+    )
+    from protein_agent.sequons import predicted_motifs
 
     try:
         sequence, warnings = validate_and_clean(text)
@@ -283,12 +289,26 @@ def summary_payload(text):
         "scale": "Kyte-Doolittle centred moving average",
         "points": [[position, value] for position, value in profile[::stride]],
     }
+    # Predicted motif tracks from the library; annotated tracks stay browser-side because
+    # the fetched UniProt record lives there. Provenance is separated at render time.
+    motifs = predicted_motifs(sequence)
+    raw_tracks = build_tracks(
+        uniprot_features=None,
+        sequons=motifs["n_glycan_sequons"],
+        deamidation=motifs["deamidation"],
+    )
+    predicted_tracks = {
+        name: [list(item) for item in items[:MAX_RENDERED_PER_TRACK]]
+        for name, items in raw_tracks.items()
+        if items
+    }
     return {
         "preliminary": True,
         "crc64": crc64(sequence).removeprefix("CRC-"),
         "sequence": sequence,
         "properties": properties,
         "plot": plot,
+        "predicted_tracks": predicted_tracks,
     }
 
 

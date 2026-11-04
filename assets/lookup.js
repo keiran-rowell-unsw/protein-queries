@@ -27,6 +27,8 @@
   var request = 0;
   var matchRequest = 0;
   var canonical = ""; // canonical sequence from the once-off UniProt fetch
+  var entryFeatures = []; // features from the fetched entry, for annotated map tracks
+  var lastPayload = null; // re-render the summary when identity arrives later
   var matchSection = summarySection; // match result renders inside the summary card
   var matchStatus = document.createElement("div");
 
@@ -121,7 +123,145 @@
     paragraph(container, options.note, "hint");
   }
 
+  var TRACK_ORDER = [
+    "Glycosylation (annotated)", "N-glycan sequon (predicted)", "Other PTM",
+    "Disulfide bond", "Active / binding site", "Transmembrane / topology",
+    "Domain", "Deamidation risk",
+  ];
+  var TRACK_COLORS = {
+    "Glycosylation (annotated)": "#0e7490", "N-glycan sequon (predicted)": "#0e7490",
+    "Other PTM": "#7c3aed", "Disulfide bond": "#b45309",
+    "Active / binding site": "#dc2626", "Transmembrane / topology": "#2563eb",
+    "Domain": "#475569", "Deamidation risk": "#ca8a04",
+  };
+  var SPAN_TRACKS = { "Transmembrane / topology": 1, "Domain": 1 };
+  var FEATURE_TRACKS = {
+    "Glycosylation (annotated)": ["Glycosylation"],
+    "Other PTM": ["Modified residue", "Lipidation", "Cross-link", "Non-standard residue"],
+    "Disulfide bond": ["Disulfide bond"],
+    "Active / binding site": ["Active site", "Binding site", "Site", "Metal binding",
+      "Calcium binding", "Nucleotide binding", "DNA binding"],
+    "Transmembrane / topology": ["Transmembrane", "Intramembrane", "Topological domain",
+      "Signal", "Transit peptide"],
+    "Domain": ["Domain", "Repeat", "Zinc finger", "Coiled coil", "Region", "Motif"],
+  };
+  var MAX_RENDERED_PER_TRACK = 400;
+
+  function classifyFeatures(features) {
+    var tracks = {};
+    TRACK_ORDER.forEach(function (name) {
+      if (FEATURE_TRACKS[name]) tracks[name] = [];
+    });
+    (features || []).forEach(function (feature) {
+      var start = feature.start, end = feature.end;
+      if (typeof start !== "number" || start < 1) return;
+      var stop = typeof end === "number" && end >= start ? end : start;
+      var detail = String(feature.description || feature.type || "");
+      Object.keys(FEATURE_TRACKS).forEach(function (name) {
+        if (FEATURE_TRACKS[name].indexOf(feature.type) >= 0) {
+          (tracks[name] = tracks[name] || []).push([start, stop, detail]);
+        }
+      });
+    });
+    return tracks;
+  }
+
+  function positionMap(container, length, annotated, predicted) {
+    var tracks = TRACK_ORDER.map(function (name) {
+      return {
+        name: name,
+        predicted: name.indexOf("predicted") >= 0 || name.indexOf("risk") >= 0,
+        items: (annotated[name] || predicted[name] || []).slice(0, MAX_RENDERED_PER_TRACK),
+        truncated: ((annotated[name] || []).length + (predicted[name] || []).length)
+          > MAX_RENDERED_PER_TRACK,
+      };
+    }).filter(function (track) { return track.items.length > 0; });
+    var heading = document.createElement("h3");
+    heading.textContent = "Preliminary position map";
+    container.appendChild(heading);
+    if (!tracks.length) {
+      paragraph(container,
+        "No annotated features were available and no sequon or deamidation motif was "
+        + "found. The queued report renders the full map.", "hint");
+      return;
+    }
+    var width = 640, rowHeight = 26, top = 26;
+    var height = top + tracks.length * rowHeight + 34;
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Preliminary residue position map");
+    svg.style.width = "100%";
+    svg.style.height = "auto";
+    var px = function (position) {
+      return 8 + (position - 1) / Math.max(1, length - 1) * (width - 16);
+    };
+    [1, Math.round(length / 2), length].forEach(function (tick) {
+      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", px(tick)); line.setAttribute("x2", px(tick));
+      line.setAttribute("y1", top - 8); line.setAttribute("y2", top + tracks.length * rowHeight);
+      line.setAttribute("stroke", "#cbd5e1");
+      svg.appendChild(line);
+      var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", px(tick)); label.setAttribute("y", top - 12);
+      label.setAttribute("font-size", "10"); label.setAttribute("fill", "#64748b");
+      label.setAttribute("text-anchor", tick === 1 ? "start" : (tick === length ? "end" : "middle"));
+      label.textContent = String(tick);
+      svg.appendChild(label);
+    });
+    tracks.forEach(function (track, row) {
+      var y = top + row * rowHeight + rowHeight / 2;
+      var name = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      name.setAttribute("x", 8); name.setAttribute("y", y + 3);
+      name.setAttribute("font-size", "10");
+      name.setAttribute("fill", TRACK_COLORS[track.name] || "#334155");
+      name.textContent = track.name + (track.truncated ? " (first " + MAX_RENDERED_PER_TRACK + ")" : "");
+      svg.appendChild(name);
+      var color = TRACK_COLORS[track.name] || "#334155";
+      track.items.forEach(function (item) {
+        var start = item[0], end = item[1], detail = String(item[2] || track.name);
+        var marker;
+        if (track.name === "Disulfide bond") {
+          [start, end].forEach(function (position) {
+            var tick = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            tick.setAttribute("x1", px(position)); tick.setAttribute("x2", px(position));
+            tick.setAttribute("y1", y - 7); tick.setAttribute("y2", y + 7);
+            tick.setAttribute("stroke", color); tick.setAttribute("stroke-width", "2");
+            var tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+            tip.textContent = detail;
+            tick.appendChild(tip);
+            svg.appendChild(tick);
+          });
+          return;
+        }
+        if (SPAN_TRACKS[track.name] && end > start) {
+          marker = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          marker.setAttribute("x", px(start));
+          marker.setAttribute("width", Math.max(2, px(end) - px(start)));
+          marker.setAttribute("y", y - 6); marker.setAttribute("height", 12);
+          marker.setAttribute("fill", track.predicted ? "none" : color);
+          marker.setAttribute("stroke", color); marker.setAttribute("stroke-width", "1.5");
+        } else {
+          marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          marker.setAttribute("cx", px(start)); marker.setAttribute("cy", y); marker.setAttribute("r", 5);
+          marker.setAttribute("fill", track.predicted ? "none" : color);
+          marker.setAttribute("stroke", color); marker.setAttribute("stroke-width", "1.5");
+        }
+        var tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        tip.textContent = detail + " (" + start + (end !== start ? "-" + end : "") + ")";
+        marker.appendChild(tip);
+        svg.appendChild(marker);
+      });
+    });
+    container.appendChild(svg);
+    paragraph(container,
+      "Filled markers are annotated in the retrieved UniProt entry; hollow markers are "
+      + "sequence-pattern predictions with unknown occupancy. Preliminary only — the "
+      + "queued report renders the authoritative map.", "hint");
+  }
+
   function showSummary(payload) {
+    lastPayload = payload;
     var props = payload.properties || {};
     clear(summarySection);
     summarySection.hidden = false;
@@ -176,6 +316,8 @@
     }
     clear(matchStatus);
     matchSection.appendChild(matchStatus);
+    positionMap(summarySection, props.length_residues,
+      classifyFeatures(entryFeatures), payload.predicted_tracks || {});
   }
 
   var identity = {};
@@ -222,7 +364,9 @@
         match.name = (recommended.fullName || {}).value || "";
         match.organism = (((entry || {}).organism || {}).scientificName) || "";
         match.reviewed = entry && entry.entryType ? String(entry.entryType) : "";
+        entryFeatures = (entry && entry.features) || [];
         showMatch(match);
+        if (lastPayload) showSummary(lastPayload);
       });
   }
 
@@ -363,7 +507,9 @@
           var organism = (((entry.organism || {}).scientificName) || "");
           var reviewed = entry.entryType ? String(entry.entryType) : "";
           canonical = (entry.sequence && entry.sequence.value) || "";
+          entryFeatures = entry.features || [];
           identity = { name: name, organism: organism };
+          if (lastPayload) showSummary(lastPayload);
           showIdentity({
             uniprot_url: "https://www.uniprot.org/uniprotkb/" + primary + "/entry",
             name: name,
