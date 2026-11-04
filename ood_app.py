@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 from urllib.parse import parse_qs
 
-HOST = os.environ.get("PROTEIN_REPORT_SSH_HOST", "katana3")
 PROJECT = os.environ.get("PROTEIN_REPORT_PROJECT", str(Path(__file__).resolve().parent))
 PBS_SUBMIT_COMMAND = (
     os.environ.get("PBS_SUBMIT_COMMAND") or shutil.which("qsub") or "/opt/pbs/bin/qsub"
