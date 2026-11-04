@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 from http.server import ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
@@ -315,6 +316,23 @@ def test_every_report_figure_is_allowed_and_path_traversal_is_blocked():
     assert served and served <= set(ood_app.FILES)
     traversal = request("GET", "/results/" + "a" * 32 + "/../../input.fasta")
     assert traversal["status"] == "404 Not Found"
+
+
+def test_summary_does_not_require_matplotlib(monkeypatch):
+    """The Passenger interpreter has no matplotlib; the summary must still work."""
+    blocked = ["matplotlib", "matplotlib.pyplot", "matplotlib.lines", "matplotlib.patches"]
+    saved = {name: sys.modules.pop(name, None) for name in blocked}
+    for name in blocked:
+        sys.modules[name] = None  # any import attempt now raises ImportError
+    try:
+        payload = ood_app.summary_payload(">sum\nACDEFGHINSTKLMNPQRSTVWY")
+    finally:
+        for name, original in saved.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+    assert payload["predicted_tracks"]["N-glycan sequon (predicted)"][0][:2] == [9, 9]
 
 
 def test_protein_prop_summary_is_stateless_and_bounded():

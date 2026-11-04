@@ -267,7 +267,7 @@ def summary_payload(text):
     project_src = str(Path(PROJECT) / "src")
     if project_src not in sys.path:
         sys.path.insert(0, project_src)
-    from protein_agent.position_map import MAX_RENDERED_PER_TRACK, build_tracks
+    from protein_agent.position_tracks import MAX_RENDERED_PER_TRACK, build_tracks
     from protein_agent.properties import (
         SequenceError,
         compute_properties,
