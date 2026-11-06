@@ -94,7 +94,13 @@ FOLDSEEK_TOOLS: list[dict[str, Any]] = [
         "the user explicitly requests Foldseek AND provides a real structure file/content.",
         {
             "query": {**_STRING, "description": "PDB or mmCIF coordinate text, never FASTA"},
-            "database": {**_STRING, "description": "Foldseek database name, e.g. pdb100"},
+            "database": {
+                **_STRING,
+                "description": (
+                    "Optional single Foldseek database name. Omit it to discover and "
+                    "search all available standard protein-structure databases."
+                ),
+            },
             "mode": {**_STRING, "description": "Optional Foldseek server mode"},
         },
         ["query"],

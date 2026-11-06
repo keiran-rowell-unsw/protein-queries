@@ -16,9 +16,7 @@ DEFAULT_MODEL = "qwen3.8-flash-next"
 DEFAULT_UNIPROT_BASE_URL = "https://rest.uniprot.org"
 DEFAULT_FOLDSEEK_BASE_URL = "https://search.foldseek.com"
 _PDBE_SIBLING = Path(sys.executable).with_name("pdbe-mcp-server")
-DEFAULT_PDBE_MCP_COMMAND = (
-    str(_PDBE_SIBLING) if _PDBE_SIBLING.is_file() else "pdbe-mcp-server"
-)
+DEFAULT_PDBE_MCP_COMMAND = str(_PDBE_SIBLING) if _PDBE_SIBLING.is_file() else "pdbe-mcp-server"
 # Live roster verified with GET /v1/models; the endpoint remains the authority.
 KNOWN_CHAT_MODELS = ("qwen3.8-flash-next", "qwen3.8-27b", "glm-5.3-flash")
 
@@ -40,6 +38,8 @@ class Settings:
     model: str = DEFAULT_MODEL
     uniprot_base_url: str = DEFAULT_UNIPROT_BASE_URL
     foldseek_base_url: str = DEFAULT_FOLDSEEK_BASE_URL
+    # A Foldseek job may remain queued much longer than an individual HTTP request.
+    foldseek_poll_timeout: float = 180.0
     pdbe_mcp_command: str = DEFAULT_PDBE_MCP_COMMAND
     pdbe_mcp_timeout: float = 45.0
     pdbe_mcp_max_result_bytes: int = 262_144
@@ -59,28 +59,28 @@ class Settings:
         else:
             load_dotenv(override=False)
 
-        settings = cls(
-            base_url=os.getenv("RESTECH_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
-            model=os.getenv("RESTECH_MODEL", DEFAULT_MODEL),
-            uniprot_base_url=os.getenv(
-                "UNIPROT_BASE_URL", DEFAULT_UNIPROT_BASE_URL
-            ).rstrip("/"),
-            foldseek_base_url=os.getenv(
-                "FOLDSEEK_BASE_URL", DEFAULT_FOLDSEEK_BASE_URL
-            ).rstrip("/"),
-            pdbe_mcp_command=os.getenv(
-                "PDBE_MCP_COMMAND", DEFAULT_PDBE_MCP_COMMAND
-            ),
-            pdbe_mcp_timeout=float(os.getenv("PDBE_MCP_TIMEOUT", "45")),
-            pdbe_mcp_max_result_bytes=int(
-                os.getenv("PDBE_MCP_MAX_RESULT_BYTES", "262144")
-            ),
-            max_tool_rounds=int(os.getenv("MAX_TOOL_ROUNDS", "6")),
-            request_timeout=float(os.getenv("RESTECH_TIMEOUT", "120")),
-            temperature=float(os.getenv("RESTECH_TEMPERATURE", "0")),
-            require_tool_calls=_env_flag("REQUIRE_TOOL_CALLS", True),
-            api_key=os.getenv("RESTECH_API_KEY", ""),
-        )
+        try:
+            settings = cls(
+                base_url=os.getenv("RESTECH_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
+                model=os.getenv("RESTECH_MODEL", DEFAULT_MODEL),
+                uniprot_base_url=os.getenv("UNIPROT_BASE_URL", DEFAULT_UNIPROT_BASE_URL).rstrip(
+                    "/"
+                ),
+                foldseek_base_url=os.getenv("FOLDSEEK_BASE_URL", DEFAULT_FOLDSEEK_BASE_URL).rstrip(
+                    "/"
+                ),
+                foldseek_poll_timeout=float(os.getenv("FOLDSEEK_POLL_TIMEOUT", "180")),
+                pdbe_mcp_command=os.getenv("PDBE_MCP_COMMAND", DEFAULT_PDBE_MCP_COMMAND),
+                pdbe_mcp_timeout=float(os.getenv("PDBE_MCP_TIMEOUT", "45")),
+                pdbe_mcp_max_result_bytes=int(os.getenv("PDBE_MCP_MAX_RESULT_BYTES", "262144")),
+                max_tool_rounds=int(os.getenv("MAX_TOOL_ROUNDS", "6")),
+                request_timeout=float(os.getenv("RESTECH_TIMEOUT", "120")),
+                temperature=float(os.getenv("RESTECH_TEMPERATURE", "0")),
+                require_tool_calls=_env_flag("REQUIRE_TOOL_CALLS", True),
+                api_key=os.getenv("RESTECH_API_KEY", ""),
+            )
+        except ValueError as exc:
+            raise ConfigError("A numeric environment setting is invalid.") from exc
         if require_key and not settings.api_key:
             raise ConfigError(
                 "RESTECH_API_KEY is not set. Export it or put it in .env (git-ignored); "
@@ -88,6 +88,8 @@ class Settings:
             )
         if settings.max_tool_rounds < 1:
             raise ConfigError("MAX_TOOL_ROUNDS must be >= 1")
+        if settings.foldseek_poll_timeout <= 0:
+            raise ConfigError("FOLDSEEK_POLL_TIMEOUT must be > 0")
         if settings.pdbe_mcp_timeout <= 0:
             raise ConfigError("PDBE_MCP_TIMEOUT must be > 0")
         if settings.pdbe_mcp_max_result_bytes < 1024:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,14 +25,15 @@ def _provenance(source: str, endpoint: str, subject: str, **extra: Any) -> dict[
     record.update(extra)
     return record
 
-_DEFAULT_DATABASE = "pdb100"
+
 _DATABASE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 _MODE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+_MAX_DATABASES = 50
 _MAX_RESULT_BYTES = 1_000_000
 
 
 class FoldseekClient:
-    """Submit a query, poll its ticket, and return the bounded result payload."""
+    """Discover databases, submit a query, poll its ticket, and bound its results."""
 
     def __init__(self, settings: Settings, *, client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -46,15 +48,40 @@ class FoldseekClient:
         if self._owns:
             self._client.close()
 
+    def _discover_databases(self) -> list[str]:
+        """Return every live standard protein-search database offered by the server UI."""
+        try:
+            response = self._client.get("/api/databases/all")
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RetrievalError(f"Foldseek database discovery failed: {exc}") from exc
+        records = payload.get("databases") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            raise RetrievalError("Foldseek returned an unexpected database list.")
+        databases = [
+            str(record["path"])
+            for record in records
+            if isinstance(record, dict)
+            and record.get("status") == "COMPLETE"
+            and record.get("default") is True
+            and not record.get("interface")
+            and not record.get("motif")
+            and not record.get("rna")
+            and _DATABASE_RE.fullmatch(str(record.get("path") or ""))
+        ]
+        if not databases:
+            raise RetrievalError("Foldseek reported no available protein-search databases.")
+        return databases[:_MAX_DATABASES]
+
     def search(
         self,
         query: str,
         *,
-        database: str = _DEFAULT_DATABASE,
+        database: str | Sequence[str] | None = None,
         mode: str | None = None,
     ) -> dict[str, Any]:
         query = query.strip()
-        database = database.strip()
         mode = mode.strip() if mode else "3diaa"  # required by the live Foldseek API
         if not query:
             raise RetrievalError("Foldseek query is empty.")
@@ -68,12 +95,22 @@ class FoldseekClient:
             )
         if len(query) > 2_000_000:
             raise RetrievalError("Foldseek query exceeds the 2 MB limit.")
-        if not _DATABASE_RE.fullmatch(database):
-            raise RetrievalError("Foldseek database contains unsupported characters.")
         if mode and not _MODE_RE.fullmatch(mode):
             raise RetrievalError("Foldseek mode contains unsupported characters.")
 
-        data = {"database[]": database, "mode": mode}
+        if database is None:
+            databases = self._discover_databases()
+        elif isinstance(database, str):
+            databases = [database.strip()]
+        else:
+            databases = [str(item).strip() for item in database]
+        databases = list(dict.fromkeys(databases))
+        if not databases or len(databases) > _MAX_DATABASES:
+            raise RetrievalError("Foldseek requires between 1 and 50 databases.")
+        if not all(_DATABASE_RE.fullmatch(item) for item in databases):
+            raise RetrievalError("Foldseek database contains unsupported characters.")
+
+        data = {"database[]": databases, "mode": mode}
         try:
             response = self._client.post(
                 "/api/ticket",
@@ -82,33 +119,60 @@ class FoldseekClient:
                         "query.cif" if query.lstrip().startswith("data_") else "query.pdb",
                         query.encode("utf-8"),
                         (
-                            "chemical/x-mmcif" if query.lstrip().startswith("data_")
+                            "chemical/x-mmcif"
+                            if query.lstrip().startswith("data_")
                             else "chemical/x-pdb"
                         ),
                     )
                 },
                 data=data,
             )
+            if response.status_code == 429:
+                try:
+                    rate_payload = response.json()
+                except ValueError:
+                    rate_payload = {
+                        "status": "RATELIMIT",
+                        "reason": "The Foldseek service rate-limited this search.",
+                    }
+                return self._result(rate_payload, databases, mode, status="ratelimit")
             response.raise_for_status()
             ticket_payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RetrievalError(
+                f"Foldseek submission failed: HTTP {exc.response.status_code}"
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise RetrievalError(f"Foldseek submission failed: {exc}") from exc
 
+        if not isinstance(ticket_payload, dict):
+            raise RetrievalError("Foldseek submission returned an unexpected response.")
         ticket = str(ticket_payload.get("id") or ticket_payload.get("ticket") or "")
         if not ticket:
-            return self._result(ticket_payload, database, mode, status="submission_error")
+            status = str(ticket_payload.get("status") or "submission_error").lower()
+            return self._result(ticket_payload, databases, mode, status=status)
 
-        deadline = time.monotonic() + min(max(self.settings.request_timeout, 10.0), 180.0)
+        poll_timeout = min(max(self.settings.foldseek_poll_timeout, 10.0), 600.0)
+        deadline = time.monotonic() + poll_timeout
         status_payload = ticket_payload
+        poll_interval = 1.0
         while True:
             status = str(status_payload.get("status") or "").upper()
-            if status in {"COMPLETE", "FAILED", "ERROR", "UNKNOWN", "RATELIMIT", "MAINTENANCE"}:
+            if status in {
+                "COMPLETE",
+                "FAILED",
+                "ERROR",
+                "UNKNOWN",
+                "RATELIMIT",
+                "MAINTENANCE",
+            }:
                 break
             if time.monotonic() >= deadline:
                 return self._result(
-                    status_payload, database, mode, status="timeout", ticket=ticket
+                    status_payload, databases, mode, status="timeout", ticket=ticket
                 )
-            time.sleep(1.0)
+            time.sleep(poll_interval)
+            poll_interval = min(5.0, poll_interval * 1.5)
             try:
                 status_response = self._client.get(f"/api/ticket/{ticket}")
                 status_response.raise_for_status()
@@ -118,52 +182,91 @@ class FoldseekClient:
 
         if status != "COMPLETE":
             return self._result(
-                status_payload, database, mode, status=status.lower(), ticket=ticket
+                status_payload, databases, mode, status=status.lower(), ticket=ticket
             )
         try:
-            result_response = self._client.get(
-                f"/api/result/{ticket}/0",
-                params={"format": "brief", "database": database},
-            )
+            result_response = self._client.get(f"/api/result/{ticket}/0", params={"format": "json"})
             result_response.raise_for_status()
-            result = self._summarise_hits(result_response.json(), database)
+            result = self._summarise_hits(result_response.json(), databases)
         except (httpx.HTTPError, ValueError) as exc:
             raise RetrievalError(f"Foldseek result query failed: {exc}") from exc
-        return self._result(result, database, mode, status="complete", ticket=ticket)
+        return self._result(result, databases, mode, status="complete", ticket=ticket)
 
     @staticmethod
-    def _summarise_hits(payload: Any, database: str) -> dict[str, Any]:
-        """Preserve bounded server-ranked candidates, not raw alignment/coordinate dumps."""
+    def _summarise_hits(payload: Any, databases: Sequence[str]) -> dict[str, Any]:
+        """Merge bounded candidates across databases, ranked by reported E-value."""
         if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
             raise RetrievalError("Foldseek returned an unexpected hit format.")
         if len(payload.get("queries") or []) != 1:
             raise RetrievalError("Foldseek did not return exactly one structural query.")
         fields = (
-            "target", "seqId", "alnLength", "qStartPos", "qEndPos",
-            "dbStartPos", "dbEndPos", "prob", "eval", "score", "qLen", "dbLen",
+            "target",
+            "seqId",
+            "alnLength",
+            "qStartPos",
+            "qEndPos",
+            "dbStartPos",
+            "dbEndPos",
+            "prob",
+            "eval",
+            "score",
+            "qLen",
+            "dbLen",
         )
-        datasets = []
+        requested = set(databases)
+        hits: list[dict[str, Any]] = []
+        totals: dict[str, int] = {}
         for group in payload["results"]:
-            if not isinstance(group, dict) or group.get("db") != database:
+            if not isinstance(group, dict) or group.get("db") not in requested:
                 continue
+            db = str(group["db"])
             nested = group.get("alignments") or []
             if not isinstance(nested, list):
                 raise RetrievalError("Foldseek alignments had an unexpected format.")
-            hits = [hit for partition in nested if isinstance(partition, list)
-                    for hit in partition if isinstance(hit, dict)]
-            datasets.append({
-                "database": database,
-                "total_hits_reported": len(hits),
-                "hits": [{key: hit[key] for key in fields if key in hit} for hit in hits[:5]],
-            })
-        if len(datasets) != 1:
-            raise RetrievalError("Foldseek did not return one matching database result.")
-        return {"mode": payload.get("mode"), "query_count": 1, **datasets[0]}
+            group_hits = [
+                hit
+                for partition in nested
+                if isinstance(partition, list)
+                for hit in partition
+                if isinstance(hit, dict)
+            ]
+            totals[db] = len(group_hits)
+            hits.extend(
+                {"database": db, **{key: hit[key] for key in fields if key in hit}}
+                for hit in group_hits
+            )
+        if not totals:
+            raise RetrievalError("Foldseek returned no matching database results.")
+
+        def rank(hit: dict[str, Any]) -> tuple[float, float, float]:
+            try:
+                evalue = float(hit.get("eval", float("inf")))
+            except (TypeError, ValueError):
+                evalue = float("inf")
+            try:
+                probability = float(hit.get("prob", 0.0))
+            except (TypeError, ValueError):
+                probability = 0.0
+            try:
+                score = float(hit.get("score", 0.0))
+            except (TypeError, ValueError):
+                score = 0.0
+            return evalue, -probability, -score
+
+        hits.sort(key=rank)
+        return {
+            "mode": payload.get("mode"),
+            "query_count": 1,
+            "databases": list(databases),
+            "database_hit_counts": totals,
+            "total_hits_reported": sum(totals.values()),
+            "hits": hits[:5],
+        }
 
     @staticmethod
     def _result(
         payload: Any,
-        database: str,
+        databases: Sequence[str],
         mode: str | None,
         *,
         status: str,
@@ -180,21 +283,30 @@ class FoldseekClient:
                     )
         except (TypeError, ValueError):
             bounded = {"unserialisable_payload": True}
-        return {
+        database_list = list(databases)
+        result = {
             "status": status,
             "ticket": ticket,
-            "database": database,
+            "database": database_list[0] if len(database_list) == 1 else None,
+            "databases": database_list,
             "mode": mode,
             "result": bounded,
             "_provenance": _provenance(
                 "foldseek",
                 "POST /api/ticket -> GET /api/result/{ticket}",
-                database,
+                ",".join(database_list),
                 ticket=ticket,
                 status=status,
                 retrieved_at=datetime.now(UTC).isoformat(timespec="seconds"),
             ),
         }
+        if isinstance(payload, dict) and payload.get("reason"):
+            result["reason"] = str(payload["reason"])
+        elif status == "timeout":
+            result["reason"] = "Foldseek did not finish before the polling deadline."
+        elif status not in {"complete", "pending", "running"}:
+            result["reason"] = f"Foldseek ended with status {status}."
+        return result
 
 
 __all__ = ["FoldseekClient"]

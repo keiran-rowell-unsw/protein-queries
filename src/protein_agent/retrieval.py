@@ -135,9 +135,7 @@ def _provenance(source: str, endpoint: str, subject: str, **extra: Any) -> dict[
     return record
 
 
-PROTEIN_LIKE_RE = re.compile(
-    "^[ACDEFGHIKLMNPQRSTVWY]{" + str(PROTEIN_MIN_RUN) + ",}$"
-)
+PROTEIN_LIKE_RE = re.compile("^[ACDEFGHIKLMNPQRSTVWY]{" + str(PROTEIN_MIN_RUN) + ",}$")
 
 
 def looks_like_amino_acid_sequence(query: str) -> bool:
@@ -283,10 +281,25 @@ class UniProtClient:
                     "properties": x.get("properties", []),
                 }
                 for x in entry.get("uniProtKBCrossReferences") or []
-                if x.get("database") in {
-                    "PDB", "GO", "Ensembl", "RefSeq", "AlphaFoldDB", "InterPro",
-                    "Pfam", "Reactome", "ChEBI", "IntAct", "BioGRID", "MINT", "DIP",
-                    "STRING", "ComplexPortal", "CORUM", "AlphaMissense",
+                if x.get("database")
+                in {
+                    "PDB",
+                    "GO",
+                    "Ensembl",
+                    "RefSeq",
+                    "AlphaFoldDB",
+                    "InterPro",
+                    "Pfam",
+                    "Reactome",
+                    "ChEBI",
+                    "IntAct",
+                    "BioGRID",
+                    "MINT",
+                    "DIP",
+                    "STRING",
+                    "ComplexPortal",
+                    "CORUM",
+                    "AlphaMissense",
                 }
             ],
             "entryAudit": {
@@ -367,7 +380,7 @@ def dispatch(
                 raise RetrievalError("Foldseek client is not configured.")
             return foldseek.search(
                 arguments["query"],
-                database=arguments.get("database") or "pdb100",
+                database=arguments.get("database"),
                 mode=arguments.get("mode"),
             )
         if name == PLOT_HYDROPATHY:

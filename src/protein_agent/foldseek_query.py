@@ -14,9 +14,12 @@ from typing import Any
 import httpx
 from Bio.PDB import MMCIFIO, MMCIFParser, Select
 from Bio.PDB.PDBExceptions import PDBException
+from Bio.PDB.Polypeptide import is_aa
 
 PDB_ID = re.compile(r"[0-9][A-Za-z0-9]{3}\Z")
-MAX_CIF_BYTES = 8_000_000
+# Bound the source download separately from Foldseek's much smaller query-file limit.
+MAX_SOURCE_CIF_BYTES = 32_000_000
+MAX_QUERY_CIF_BYTES = 2_000_000
 
 
 class _ChainOnly(Select):
@@ -28,6 +31,11 @@ class _ChainOnly(Select):
 
     def accept_chain(self, chain: Any) -> bool:
         return chain.id == self.chain_id
+
+    def accept_residue(self, residue: Any) -> bool:
+        # Foldseek searches the polymer backbone. Exclude waters and unrelated ligands
+        # that Biopython otherwise retains inside the selected author chain.
+        return bool(is_aa(residue, standard=False))
 
 
 def prepare_query(
@@ -67,25 +75,30 @@ def prepare_query(
             content = bytearray()
             for chunk in response.iter_bytes():
                 content.extend(chunk)
-                if len(content) > MAX_CIF_BYTES:
+                if len(content) > MAX_SOURCE_CIF_BYTES:
                     return {
                         "status": "skipped",
-                        "reason": "Mapped structure exceeds the 8 MB query limit.",
+                        "reason": "Source structure exceeds the 32 MB download limit.",
                     }
         text = content.decode("utf-8")
         if not text.lstrip().startswith("data_"):
             raise ValueError("PDBe did not return an mmCIF structure")
         parsed = MMCIFParser(QUIET=True).get_structure(pdb_id, io.StringIO(text))
         first_model = next(parsed.get_models())
-        if chain_id not in first_model or not list(first_model[chain_id].get_atoms()):
+        if chain_id not in first_model or not any(
+            is_aa(residue, standard=False) for residue in first_model[chain_id]
+        ):
             return {
                 "status": "skipped",
-                "reason": "The PDBe-mapped chain was not present in the downloaded structure.",
+                "reason": (
+                    "The PDBe-mapped protein chain was not present in the downloaded "
+                    "structure."
+                ),
             }
         writer = MMCIFIO()
         writer.set_structure(parsed)
         writer.save(str(destination), select=_ChainOnly(chain_id))
-        if destination.stat().st_size > 2_000_000:
+        if destination.stat().st_size > MAX_QUERY_CIF_BYTES:
             destination.unlink()
             return {
                 "status": "skipped",

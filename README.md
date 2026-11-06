@@ -163,10 +163,13 @@ notebooks, shells, or applications that need a persistent allocation. The separa
 
 When enabled, Foldseek runs only after a verified UniProt accession has a usable
 PDBe-mapped experimental structure. The report downloads the mapped structure,
-extracts the mapped chain, and submits its mmCIF coordinates to Foldseek in
-`pdb100` 3Di/AA mode. Raw FASTA is not submitted as a 3D structure.
+extracts the mapped chain, discovers Foldseek's currently available standard
+protein-structure databases, and submits the mmCIF coordinates to all of them in
+3Di/AA mode. This includes experimental and predicted-structure collections;
+raw FASTA is not submitted as a 3D structure.
 
-Up to five candidate hits, with bounded scores and provenance, are shown in the
+Up to five candidates ranked across all searched databases, with bounded scores
+and provenance, are shown in the
 report and saved in `report.json`. Missing mappings, inaccessible structures,
 service failures, and busy searches are reported as skipped, unavailable, or
 timed out—not as evidence that no structural neighbours exist.
@@ -176,6 +179,7 @@ timed out—not as evidence that no structural neighbours exist.
 | Variable | Purpose |
 | --- | --- |
 | `UNIPROT_BASE_URL` | UniProt API base; defaults to `https://rest.uniprot.org` |
+| `FOLDSEEK_POLL_TIMEOUT` | Maximum ticket polling time in seconds; defaults to `180` |
 | `PROTEIN_REPORT_EXTENDED_PYTHON` | Compute-node Python for queued reports |
 | `PROTEIN_REPORT_EMAIL` | Optional default report recipient |
 | `PBS_SUBMIT_COMMAND` | Optional absolute or named `qsub` command |
